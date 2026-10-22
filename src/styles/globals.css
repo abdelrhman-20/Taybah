@@ -1,0 +1,240 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-porcelain: #f7f5f0;
+  --color-burgundy: #681d20;
+  --color-gold: #b58a43;
+  --color-espresso: #29221e;
+  --color-taupe: #d8cfc1;
+
+  /* Arabic is the default locale (§2.2) — base fonts target Arabic script;
+     [dir="ltr"] below swaps in the Latin pairing. */
+  --font-sans: 'IBM Plex Sans Arabic', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Amiri', 'Fraunces', Georgia, serif;
+}
+
+html[dir='ltr'] {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces', Georgia, serif;
+}
+
+body {
+  background-color: var(--color-porcelain);
+  color: var(--color-espresso);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Arabic script reads more comfortably with slightly looser leading than
+   Latin at the same size (§4) — applied at the body level so every
+   component inherits it without per-component overrides. */
+html[dir='rtl'] body {
+  line-height: 1.75;
+}
+
+::selection {
+  background-color: var(--color-burgundy);
+  color: #ffffff;
+}
+
+/* Immediate entrance motion for above-the-fold content (the hero) — runs
+   once on load rather than on scroll, since it's already in view. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up {
+    animation: none;
+  }
+}
+
+/* Floating radial social menu — one trigger circle at rest; on hover,
+   keyboard focus, or a tap (the `.is-open` class, toggled in
+   SocialSidebar.tsx for touch devices with no hover), the whole cluster
+   shifts right and the platform icons fan out around the trigger on a
+   circle (each icon's offset set per-link via --tx/--ty custom properties,
+   computed in the component). All movement is `transform: translate(...)`,
+   which is physical, not logical, so none of it needs an RTL-direction
+   workaround the way width/margin-based layouts would. */
+.social-radial {
+  /* translateY(-50%) does the vertical centering against `top: 50%` (set
+     via Tailwind's top-1/2) — kept in this same transform, not a separate
+     Tailwind -translate-y-1/2 utility, since both rules below also set
+     `transform` and only one declaration of that property can win. */
+  transform: translateY(-50%) translateX(0);
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.social-radial:focus-within,
+.social-radial.is-open {
+  transform: translateY(-50%) translateX(92px);
+}
+
+.social-radial-stage {
+  position: relative;
+  width: 3.25rem;
+  height: 3.25rem;
+}
+
+.social-radial-trigger {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 999px;
+  /* Always deep burgundy — the main button, not just on hover like the
+     bronze item circles below. */
+  background-color: #70272b;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 8px 20px -8px rgb(41 34 30 / 0.45);
+  transform: scale(1);
+  transition: width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), height 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.social-radial:focus-within .social-radial-trigger,
+.social-radial.is-open .social-radial-trigger {
+  width: 3.25rem;
+  height: 3.25rem;
+}
+
+.social-radial-trigger:hover,
+.social-radial-trigger:focus-visible {
+  transform: scale(1.06);
+  box-shadow: 0 12px 26px -8px rgb(41 34 30 / 0.55);
+}
+
+.social-radial-item {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: -1.125rem 0 0 -1.125rem;
+  border-radius: 999px;
+  border: 1px solid rgb(248 244 238 / 0.3);
+  /* Muted bronze at rest, deepening to burgundy on hover — see
+     .social-radial-item:hover below. Icon stays warm ivory in both states. */
+  background-color: #806044;
+  color: #f8f4ee;
+  opacity: 0;
+  box-shadow: 0 0 0 0 rgb(41 34 30 / 0);
+  transform: translate(0, 0) scale(0.4);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease, background-color 0.25s ease,
+    color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.social-radial:focus-within .social-radial-item,
+.social-radial.is-open .social-radial-item {
+  opacity: 1;
+  transform: translate(var(--tx), var(--ty)) scale(1);
+}
+
+/* Hover/focus scales the item up slightly WITHOUT losing its radial
+   position — these selectors (more specific than the open-state rule
+   above) keep the same translate(--tx, --ty) and only change the scale
+   factor, so the icon grows in place on its own spot on the circle. */
+.social-radial:focus-within .social-radial-item:hover,
+.social-radial:focus-within .social-radial-item:focus-visible,
+.social-radial.is-open .social-radial-item:hover,
+.social-radial.is-open .social-radial-item:focus-visible {
+  transform: translate(var(--tx), var(--ty)) scale(1.1);
+}
+
+.social-radial-item:hover,
+.social-radial-item:focus-visible {
+  background-color: #50191d;
+  color: #ffffff;
+  box-shadow: 0 6px 16px -6px rgb(41 34 30 / 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .social-radial,
+  .social-radial-trigger,
+  .social-radial-item {
+    transition: none;
+  }
+}
+
+/* Wishlist heart — idle double-pulse ("thump-thump", like a real heartbeat)
+   at a comfortable interval, not a continuous bounce. Hover swaps in a
+   slightly more pronounced, quicker version and tints toward burgundy.
+   transform-origin stays centered so the icon never shifts position, and
+   only `transform`/`color` animate, never layout-affecting properties. */
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); }
+  5% { transform: scale(1.15); }
+  10% { transform: scale(1); }
+  15% { transform: scale(1.08); }
+  20% { transform: scale(1); }
+}
+
+@keyframes heartbeat-hover {
+  0%, 100% { transform: scale(1); }
+  8% { transform: scale(1.22); }
+  16% { transform: scale(1); }
+  24% { transform: scale(1.12); }
+  32% { transform: scale(1); }
+}
+
+.wishlist-heart {
+  transform-origin: center;
+  animation: heartbeat 3.6s ease-in-out infinite;
+  transition: color 0.25s ease;
+}
+
+.wishlist-heart-trigger:hover .wishlist-heart,
+.wishlist-heart-trigger:focus-visible .wishlist-heart {
+  animation: heartbeat-hover 1.9s ease-in-out infinite;
+  color: var(--color-burgundy);
+}
+
+/* type="search" inputs get a native built-in clear (x) button in Chrome,
+   Edge, and Safari — the header search already renders its own branded
+   clear button, so the native one showed up as a second, mismatched X
+   stacked right next to it. Hidden everywhere rather than per-input, since
+   every search box in the app pairs its own clear control the same way. */
+input[type='search']::-webkit-search-cancel-button,
+input[type='search']::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+input[type='search']::-ms-clear,
+input[type='search']::-ms-reveal {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wishlist-heart,
+  .wishlist-heart-trigger:hover .wishlist-heart,
+  .wishlist-heart-trigger:focus-visible .wishlist-heart {
+    animation: none;
+  }
+}
