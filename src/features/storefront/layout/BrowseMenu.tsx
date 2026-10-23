@@ -61,11 +61,13 @@ export function BrowseMenu() {
             : 'invisible -translate-y-1.5 opacity-0 pointer-events-none'
         }`}
       >
-        {shopItem && <BrowseMenuLink item={shopItem} onNavigate={close} className="mb-1.5" />}
-        <div className="grid grid-cols-2 gap-1.5">
-          {gridItems.map((item) => (
-            <BrowseMenuLink key={item.id} item={item} onNavigate={close} />
-          ))}
+        <div className="rounded-2xl border border-espresso/10 bg-white p-2.5 shadow-[0_18px_40px_-16px_rgba(41,34,30,0.35)]">
+          {shopItem && <BrowseMenuLink item={shopItem} onNavigate={close} className="mb-1.5" />}
+          <div className="grid grid-cols-2 gap-1.5">
+            {gridItems.map((item) => (
+              <BrowseMenuLink key={item.id} item={item} onNavigate={close} />
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -85,12 +87,17 @@ function BrowseMenuLink({
   const to = navHref(locale, item.path);
   const transitionClick = useTransitionClick(to, item.label);
   const cls =
-    `block rounded-xl border border-taupe/60 bg-porcelain px-4 py-3 text-[13px] tracking-wide text-espresso shadow-[0_6px_16px_-12px_rgba(41,34,30,0.35)] transition-colors duration-150 hover:border-burgundy/25 hover:bg-white hover:text-burgundy focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-burgundy ${className}`;
+    `group block rounded-lg px-3 py-2.5 text-[13px] tracking-wide text-espresso transition-colors duration-150 hover:bg-porcelain hover:text-burgundy focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-burgundy ${className}`;
+  const label = (
+    <span className="inline-block transition-transform duration-150 group-hover:scale-[1.08] rtl:origin-right ltr:origin-left">
+      {item.label}
+    </span>
+  );
 
   if (item.kind === 'external') {
     return (
       <a href={item.path} target="_blank" rel="noopener noreferrer" onClick={onNavigate} role="menuitem" className={cls}>
-        {item.label}
+        {label}
       </a>
     );
   }
@@ -102,9 +109,9 @@ function BrowseMenuLink({
         onNavigate();
         transitionClick(e);
       }}
-      className={({ isActive }) => `${cls} ${isActive ? 'border-gold/40 text-burgundy' : ''}`}
+      className={({ isActive }) => `${cls} ${isActive ? 'bg-porcelain text-burgundy' : ''}`}
     >
-      {item.label}
+      {label}
     </NavLink>
   );
 }

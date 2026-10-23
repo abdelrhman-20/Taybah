@@ -106,7 +106,7 @@ export function ProductCard({
             : 'relative overflow-hidden rounded-sm bg-taupe/20 shadow-[0_16px_32px_-20px_rgba(41,34,30,0.28)] ring-1 ring-espresso/5 transition-shadow duration-500 group-hover:shadow-[0_20px_40px_-18px_rgba(41,34,30,0.38)]'
         }
       >
-        <Link to={productHref} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold">
+        <Link to={productHref} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold max-h-[300px]">
           <AssetImage
             src={product.image}
             alt={product.name[loc]}
@@ -144,32 +144,60 @@ export function ProductCard({
           <Heart className={`size-4 ${wishlisted ? 'fill-current' : ''}`} />
         </button>
 
+        {/* Category + availability pills pinned to the image's bottom edge
+            (card variant only — other listings keep them as plain text
+            lines under the title). pointer-events-none so taps still land
+            on the product link underneath. */}
+        {card && (
+          <div className="pointer-events-none absolute bottom-3 start-3 flex items-center gap-2">
+            {categoryName && (
+              <span className="rounded-md bg-burgundy px-3 py-1 text-[11px] font-semibold text-white shadow-sm">
+                {categoryName}
+              </span>
+            )}
+            <span
+              className={`rounded-md px-3 py-1 text-[11px] font-semibold text-white shadow-sm ${
+                displayAvailability === 'in_stock'
+                  ? 'bg-gold'
+                  : displayAvailability === 'low_stock'
+                    ? 'bg-burgundy'
+                    : 'bg-espresso/70'
+              }`}
+            >
+              {availabilityLabel[displayAvailability][loc]}
+            </span>
+          </div>
+        )}
+
         {/* Centered action toolbar — fades/scales in on hover/focus, and
             stays visible on touch (`hover: none`) devices instead of needing
             a hover that doesn't exist there. Sits above the card link so
             each icon's own click never falls through to the image link
-            underneath it. */}
-        <div className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 scale-95 items-center gap-2 rounded-full bg-white px-3 py-2 opacity-0 shadow-md transition-all duration-[400ms] group-hover:scale-100 group-hover:opacity-100 group-focus-within:scale-100 group-focus-within:opacity-100 [@media(hover:none)]:scale-100 [@media(hover:none)]:opacity-100">
-          <button
-            type="button"
-            onClick={() => setQuickViewOpen(true)}
-            aria-label={toolbarCopy.quickView}
-            title={toolbarCopy.quickView}
-            className="pointer-events-auto inline-flex size-9 items-center justify-center rounded-full text-espresso/60 transition hover:bg-burgundy hover:text-white"
-          >
-            <Search className="size-4" />
-          </button>
-          <button
-            type="button"
-            onClick={handleCartIcon}
-            aria-label={quickAddOptions ? toolbarCopy.addToCart : toolbarCopy.chooseOptions}
-            title={quickAddOptions ? toolbarCopy.addToCart : toolbarCopy.chooseOptions}
-            disabled={out}
-            className="pointer-events-auto inline-flex size-9 items-center justify-center rounded-full text-espresso/60 transition hover:bg-burgundy hover:text-white disabled:pointer-events-none disabled:opacity-40"
-          >
-            <ShoppingCart className="size-4" />
-          </button>
-        </div>
+            underneath it. The card variant moves these actions into the
+            info area next to the price instead. */}
+        {!card && (
+          <div className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 scale-95 items-center gap-2 rounded-full bg-white px-3 py-2 opacity-0 shadow-md transition-all duration-[400ms] group-hover:scale-100 group-hover:opacity-100 group-focus-within:scale-100 group-focus-within:opacity-100 [@media(hover:none)]:scale-100 [@media(hover:none)]:opacity-100">
+            <button
+              type="button"
+              onClick={() => setQuickViewOpen(true)}
+              aria-label={toolbarCopy.quickView}
+              title={toolbarCopy.quickView}
+              className="pointer-events-auto inline-flex size-9 items-center justify-center rounded-full text-espresso/60 transition hover:bg-burgundy hover:text-white"
+            >
+              <Search className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleCartIcon}
+              aria-label={quickAddOptions ? toolbarCopy.addToCart : toolbarCopy.chooseOptions}
+              title={quickAddOptions ? toolbarCopy.addToCart : toolbarCopy.chooseOptions}
+              disabled={out}
+              className="pointer-events-auto inline-flex size-9 items-center justify-center rounded-full text-espresso/60 transition hover:bg-burgundy hover:text-white disabled:pointer-events-none disabled:opacity-40"
+            >
+              <ShoppingCart className="size-4" />
+            </button>
+          </div>
+        )}
 
         <p role="status" aria-live="polite" className="sr-only">
           {announcement}
@@ -179,32 +207,65 @@ export function ProductCard({
       <div className={card ? 'px-4 pb-4 pt-3' : 'pt-4'}>
         <Link
           to={productHref}
-          className="block font-display text-[15px] text-espresso transition hover:text-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+          className={`text-[20px] block font-display text-espresso transition hover:text-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
+            card ? 'text-base' : ''
+          }`}
         >
           {product.name[loc]}
         </Link>
-        {categoryName && <p className="mt-1 text-xs text-espresso/55">{categoryName}</p>}
-        <div className="mt-1.5 flex items-baseline gap-2">
-          <span className={`text-sm font-semibold ${product.compareAtPrice ? 'text-burgundy' : 'text-espresso'}`}>
-            {formatPrice(product.price, loc)}
-          </span>
-          {product.compareAtPrice && (
-            <span className="text-xs text-espresso/45 line-through" dir="ltr">
-              {formatPrice(product.compareAtPrice, loc)}
+        {/* Card variant shows category + availability as on-image pills
+            instead of these text lines. */}
+        {!card && categoryName && <p className="mt-1 text-xs text-espresso/55">{categoryName}</p>}
+        <div className={`mt-1.5 flex gap-2 ${card ? 'items-center justify-between' : 'items-baseline'}`}>
+          <div className="flex items-baseline gap-2">
+            <span className={`text-sm font-semibold ${product.compareAtPrice ? 'text-burgundy' : 'text-espresso'}`}>
+              {formatPrice(product.price, loc)}
             </span>
+            {product.compareAtPrice && (
+              <span className="text-xs text-espresso/45 line-through" dir="ltr">
+                {formatPrice(product.compareAtPrice, loc)}
+              </span>
+            )}
+          </div>
+          {/* Card variant: same quick-view/cart actions as the on-image
+              toolbar, rendered smaller inline next to the price. */}
+          {card && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setQuickViewOpen(true)}
+                aria-label={toolbarCopy.quickView}
+                title={toolbarCopy.quickView}
+                className="inline-flex size-8 items-center justify-center rounded-full text-espresso/50 transition hover:bg-porcelain hover:text-burgundy"
+              >
+                <Search className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleCartIcon}
+                aria-label={quickAddOptions ? toolbarCopy.addToCart : toolbarCopy.chooseOptions}
+                title={quickAddOptions ? toolbarCopy.addToCart : toolbarCopy.chooseOptions}
+                disabled={out}
+                className="inline-flex size-8 items-center justify-center rounded-full text-espresso/50 transition hover:bg-porcelain hover:text-burgundy disabled:pointer-events-none disabled:opacity-40"
+              >
+                <ShoppingCart className="size-3.5" />
+              </button>
+            </div>
           )}
         </div>
-        <p
-          className={`mt-1 text-[11px] tracking-wide ${
-            displayAvailability === 'low_stock'
-              ? 'text-burgundy'
-              : out
-                ? 'text-espresso/45'
-                : 'text-espresso/55'
-          }`}
-        >
-          {availabilityLabel[displayAvailability][loc]}
-        </p>
+        {!card && (
+          <p
+            className={`mt-1 text-[11px] tracking-wide ${
+              displayAvailability === 'low_stock'
+                ? 'text-burgundy'
+                : out
+                  ? 'text-espresso/45'
+                  : 'text-espresso/55'
+            }`}
+          >
+            {availabilityLabel[displayAvailability][loc]}
+          </p>
+        )}
       </div>
     </article>
   );

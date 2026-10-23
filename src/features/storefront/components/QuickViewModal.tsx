@@ -1,5 +1,6 @@
 import { AssetImage } from '../../shared/components/AssetImage';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router';
 import { Heart, ShoppingBag, X } from 'lucide-react';
 import type { CatalogProduct } from '../catalog/catalogData';
@@ -65,7 +66,11 @@ export function QuickViewModal({ product, onClose }: { product: CatalogProduct; 
 
   const { out, options } = resolveQuickAdd(product, attrs);
 
-  return (
+  // Portaled to <body>: callers render this inside elements with
+  // overflow-hidden / transforms (e.g. ProductCard's bordered card), and a
+  // transformed ancestor turns `fixed` into `absolute`, clipping the modal
+  // to the card's box.
+  return createPortal(
     <div
       className="fixed inset-0 z-80 flex items-center justify-center bg-espresso/60 p-4"
       role="dialog"
@@ -147,6 +152,7 @@ export function QuickViewModal({ product, onClose }: { product: CatalogProduct; 
           </Link>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
