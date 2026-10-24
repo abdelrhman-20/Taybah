@@ -1,13 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogProduct } from './catalogData';
 import type { GuestOrder, OrderLine } from '../checkout/orderStore';
+import { catalogCategories, catalogCollections } from './catalogData';
+import { freshBackend } from '../../../test/harness';
+
+const seed = { categories: catalogCategories, collections: catalogCollections };
 
 // Dedicated coverage for catalogStore's product-level behavior: public
 // discoverability, and — the focus of Step 11B — productReferenceInfo and
 // removeProduct's deletion-safety contract (never blocked, never corrupts
 // historical order snapshots). Store modules are loaded fresh per test
-// against isolated in-memory storage so cart/wishlist/homepage/order state
-// never leaks between tests.
+// against an isolated FAKE backend (client.mock.ts) and an isolated cart
+// storage so cart/wishlist/homepage/order state never leaks between tests.
+// The catalog starts INITIALIZED (as after a completed migration) with the
+// built-in categories and collections; products are written through the
+// store like the admin does, so every mutation is awaited.
 
 function memoryStorage(): Storage {
   const m = new Map<string, string>();
@@ -26,14 +33,22 @@ function memoryStorage(): Storage {
 let storage: Storage;
 
 async function stores() {
-  vi.resetModules();
+  const b = await freshBackend('admin');
   vi.stubGlobal('localStorage', storage);
+  const docs = await import('./catalogDocs');
   const catalog = await import('./catalogStore');
   const orders = await import('../checkout/orderStore');
   const cart = await import('../cart/useCart');
   const wishlist = await import('../wishlist/useWishlist');
   const home = await import('../home/homeStore');
-  return { catalog, orders, cart, wishlist, home };
+  await docs.whenDocsSettled();
+  await home.refreshHomeContent();
+  // As after a completed migration: flag set, taxonomy present, no products.
+  b.setInitialized(true);
+  for (const c of seed.categories) b.putDoc('category', c.slug, c, { slug: c.slug, visible: c.visible, sort_order: c.order });
+  for (const c of seed.collections) b.putDoc('collection', c.slug, c, { slug: c.slug, visible: c.visible, sort_order: c.order });
+  await docs.refreshDocs();
+  return { b, docs, catalog, orders, cart, wishlist, home };
 }
 
 beforeEach(() => {
@@ -104,7 +119,7 @@ describe('productIsPublic / publicProducts', () => {
   it('a published product in a visible category and collection is public', async () => {
     const { catalog } = await stores();
     const p = product();
-    catalog.upsertProduct(p);
+    await catalog.upsertProduct(p);
     const state = catalog.getCatalog();
     expect(catalog.productIsPublic(p, state)).toBe(true);
     expect(catalog.publicProducts(state).map((x) => x.id)).toContain('p1');
@@ -113,7 +128,7 @@ describe('productIsPublic / publicProducts', () => {
   it('an unpublished product is never public, even in a visible taxonomy', async () => {
     const { catalog } = await stores();
     const p = product({ published: false });
-    catalog.upsertProduct(p);
+    await catalog.upsertProduct(p);
     const state = catalog.getCatalog();
     expect(catalog.productIsPublic(p, state)).toBe(false);
     expect(catalog.publicProducts(state).map((x) => x.id)).not.toContain('p1');
@@ -122,8 +137,8 @@ describe('productIsPublic / publicProducts', () => {
   it('a product in a hidden category is never public even when published', async () => {
     const { catalog } = await stores();
     const p = product();
-    catalog.upsertProduct(p);
-    catalog.upsertCategory({
+    await catalog.upsertProduct(p);
+    await catalog.upsertCategory({
       slug: 'rugs',
       name: { ar: 'سجاد', en: 'Rugs' },
       description: { ar: '', en: '' },
@@ -139,7 +154,7 @@ describe('productIsPublic / publicProducts', () => {
 describe('productReferenceInfo (Step 11B)', () => {
   it('reports all-zero when nothing touches the product', async () => {
     const { catalog } = await stores();
-    catalog.upsertProduct(product());
+    await catalog.upsertProduct(product());
     expect(catalog.productReferenceInfo('p1')).toEqual({
       cartLines: 0,
       wishlisted: false,
@@ -151,28 +166,28 @@ describe('productReferenceInfo (Step 11B)', () => {
   it('counts an active cart line referencing the product', async () => {
     const { catalog, cart } = await stores();
     const p = product();
-    catalog.upsertProduct(p);
+    await catalog.upsertProduct(p);
     cart.addToCart(p, { color: 'burgundy', size: null }, 1);
     expect(catalog.productReferenceInfo('p1').cartLines).toBe(1);
   });
 
   it('detects a wishlist save', async () => {
     const { catalog, wishlist } = await stores();
-    catalog.upsertProduct(product());
+    await catalog.upsertProduct(product());
     wishlist.toggleWishlist('p1');
     expect(catalog.productReferenceInfo('p1').wishlisted).toBe(true);
   });
 
   it('detects homepage featured-product usage', async () => {
     const { catalog, home } = await stores();
-    catalog.upsertProduct(product());
-    home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
+    await catalog.upsertProduct(product());
+    await home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
     expect(catalog.productReferenceInfo('p1').homepageFeatured).toBe(true);
   });
 
   it('counts historical orders referencing the product, purely informationally', async () => {
     const { catalog, orders } = await stores();
-    catalog.upsertProduct(product());
+    await catalog.upsertProduct(product());
     await orders.saveOrder(order([orderLine()]));
     await orders.saveOrder(order([orderLine({ productId: 'other' })], 'TYB-2025-OTHER'));
     expect(catalog.productReferenceInfo('p1').historicalOrders).toBe(1);
@@ -181,10 +196,10 @@ describe('productReferenceInfo (Step 11B)', () => {
   it('counts every kind of reference at once without double counting across types', async () => {
     const { catalog, cart, wishlist, home, orders } = await stores();
     const p = product();
-    catalog.upsertProduct(p);
+    await catalog.upsertProduct(p);
     cart.addToCart(p, { color: 'burgundy', size: null }, 1);
     wishlist.toggleWishlist('p1');
-    home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
+    await home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
     await orders.saveOrder(order([orderLine()]));
     expect(catalog.productReferenceInfo('p1')).toEqual({
       cartLines: 1,
@@ -199,29 +214,29 @@ describe('removeProduct never blocks on references (Step 11B)', () => {
   it('removes the product even while it has active cart/wishlist/homepage references', async () => {
     const { catalog, cart, wishlist, home } = await stores();
     const p = product();
-    catalog.upsertProduct(p);
+    await catalog.upsertProduct(p);
     cart.addToCart(p, { color: 'burgundy', size: null }, 1);
     wishlist.toggleWishlist('p1');
-    home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
+    await home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
 
-    catalog.removeProduct('p1');
+    await catalog.removeProduct('p1');
 
     expect(catalog.getCatalog().products.find((x) => x.id === 'p1')).toBeUndefined();
   });
 
   it('removes the product even with historical orders referencing it', async () => {
     const { catalog, orders } = await stores();
-    catalog.upsertProduct(product());
+    await catalog.upsertProduct(product());
     await orders.saveOrder(order([orderLine()]));
 
-    catalog.removeProduct('p1');
+    await catalog.removeProduct('p1');
 
     expect(catalog.getCatalog().products.find((x) => x.id === 'p1')).toBeUndefined();
   });
 
   it('never rewrites a historical order snapshot after deleting the referenced product', async () => {
     const { catalog, orders } = await stores();
-    catalog.upsertProduct(product());
+    await catalog.upsertProduct(product());
     const original = order([
       orderLine({
         productId: 'p1',
@@ -234,7 +249,7 @@ describe('removeProduct never blocks on references (Step 11B)', () => {
     ]);
     await orders.saveOrder(original);
 
-    catalog.removeProduct('p1');
+    await catalog.removeProduct('p1');
 
     const [stored] = orders.getOrders();
     expect(stored.lines).toEqual(original.lines);
@@ -248,10 +263,10 @@ describe('removeProduct never blocks on references (Step 11B)', () => {
   it('leaves the cart line readable and blocked (never deleted) after the product is removed', async () => {
     const { catalog, cart } = await stores();
     const p = product();
-    catalog.upsertProduct(p);
+    await catalog.upsertProduct(p);
     cart.addToCart(p, { color: 'burgundy', size: null }, 1);
 
-    catalog.removeProduct('p1');
+    await catalog.removeProduct('p1');
 
     const [resolved] = catalog.resolveCartLines(cart.getCartLines(), catalog.getCatalog());
     expect(resolved.block).toBe('unavailable');
@@ -262,10 +277,10 @@ describe('removeProduct never blocks on references (Step 11B)', () => {
 
   it('leaves a dangling wishlist id in place — not auto-cleaned, but harmless (filtered at render)', async () => {
     const { catalog, wishlist } = await stores();
-    catalog.upsertProduct(product());
+    await catalog.upsertProduct(product());
     wishlist.toggleWishlist('p1');
 
-    catalog.removeProduct('p1');
+    await catalog.removeProduct('p1');
 
     // The wishlist store itself doesn't know the product is gone — the
     // storefront's WishlistPage filters unresolved ids when rendering.
@@ -276,11 +291,121 @@ describe('removeProduct never blocks on references (Step 11B)', () => {
 
   it('leaves a dangling homepage featured-product id in place — not auto-cleaned, but harmless (filtered at render)', async () => {
     const { catalog, home } = await stores();
-    catalog.upsertProduct(product());
-    home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
+    await catalog.upsertProduct(product());
+    await home.updateHomeSection('products', { ...home.getHomeContent().products, productIds: ['p1'] });
 
-    catalog.removeProduct('p1');
+    await catalog.removeProduct('p1');
 
     expect(home.getHomeContent().products.productIds).toEqual(['p1']);
+  });
+});
+
+describe('persistence (catalog documents)', () => {
+  it('serves the built-in catalog read-only until the migration flag is set', async () => {
+    const b = await freshBackend('admin');
+    vi.stubGlobal('localStorage', storage);
+    const docs = await import('./catalogDocs');
+    const catalog = await import('./catalogStore');
+    await docs.whenDocsSettled();
+    expect(catalog.getCatalog().products.length).toBeGreaterThan(5); // seed demo products
+    await expect(catalog.upsertProduct(product())).rejects.toMatchObject({ code: 'not_initialized' });
+    expect(b.tables.catalog_docs).toHaveLength(0);
+  });
+
+  it('after the flag is set, the storefront view comes from the database, not the seed', async () => {
+    const { catalog } = await stores();
+    expect(catalog.getCatalog().products).toEqual([]);
+    await catalog.upsertProduct(product());
+    expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['p1']);
+  });
+
+  it('a saved product is stored in the database and read back identically', async () => {
+    const { b, catalog } = await stores();
+    await catalog.upsertProduct(product({ price: 4321 }));
+    const row = b.tables.catalog_docs.find((d) => d.kind === 'product' && d.id === 'p1')!;
+    expect(row.slug).toBe('test-rug');
+    expect((row.data as { price: number }).price).toBe(4321);
+    expect(catalog.getCatalog().products[0].price).toBe(4321);
+  });
+
+  it('survives a full reload: a new module graph reads the same product from the database', async () => {
+    const { b, catalog } = await stores();
+    await catalog.upsertProduct(product({ price: 999 }));
+    const dbState = JSON.stringify(b.tables.catalog_docs); // what the server holds
+    // "Reload the page": fresh modules, SAME backend contents
+    const backendMod = (await import('../../../lib/supabase/client')) as unknown as {
+      backend: typeof b;
+    };
+    const keepTables = b.tables;
+    vi.resetModules();
+    const b2 = ((await import('../../../lib/supabase/client')) as unknown as { backend: typeof b }).backend;
+    b2.reset();
+    b2.role = 'anon'; // a visitor in a fresh private window
+    b2.tables = keepTables;
+    void backendMod;
+    const docs2 = await import('./catalogDocs');
+    const catalog2 = await import('./catalogStore');
+    await docs2.whenDocsSettled();
+    expect(catalog2.getCatalog().products.map((p) => [p.id, p.price])).toEqual([['p1', 999]]);
+    expect(JSON.stringify(b2.tables.catalog_docs)).toBe(dbState);
+  });
+
+  it('new products are listed first (newest first), matching the old array order', async () => {
+    const { catalog } = await stores();
+    await catalog.upsertProduct(product({ id: 'a', slug: 'a' }));
+    await catalog.upsertProduct(product({ id: 'b', slug: 'b' }));
+    await catalog.upsertProduct(product({ id: 'c', slug: 'c' }));
+    expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['c', 'b', 'a']);
+    // editing keeps the position
+    await catalog.upsertProduct(product({ id: 'b', slug: 'b', price: 5 }));
+    expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('a stale form (opened on an older revision) is rejected and the newer copy is kept', async () => {
+    const { b, docs, catalog } = await stores();
+    await catalog.upsertProduct(product({ price: 100 }));
+    const opened = docs.docRevision('product', 'p1');
+    await catalog.upsertProduct(product({ price: 200 })); // a second admin saves
+    await expect(
+      catalog.upsertProduct(product({ price: 300 }), { expectedRevision: opened }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    const row = b.tables.catalog_docs.find((d) => d.id === 'p1')!;
+    expect((row.data as { price: number }).price).toBe(200);
+  });
+
+  it('a duplicate slug is refused and nothing is saved', async () => {
+    const { catalog } = await stores();
+    await catalog.upsertProduct(product({ id: 'a', slug: 'same' }));
+    await expect(catalog.upsertProduct(product({ id: 'b', slug: 'same' }))).rejects.toMatchObject({
+      code: 'duplicate_slug',
+    });
+    expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['a']);
+  });
+
+  it('a signed-in non-admin cannot write (unauthorized), and the catalog is unchanged', async () => {
+    const { b, catalog, docs } = await stores();
+    await catalog.upsertProduct(product());
+    b.signIn('user');
+    await docs.refreshDocs();
+    await expect(catalog.upsertProduct(product({ price: 1 }))).rejects.toMatchObject({
+      code: 'unauthorized',
+    });
+    expect(catalog.getCatalog().products[0].price).toBe(1000);
+  });
+
+  it('draft (unpublished) products are not delivered to visitors', async () => {
+    const { b, catalog, docs } = await stores();
+    await catalog.upsertProduct(product({ id: 'live', slug: 'live' }));
+    await catalog.upsertProduct(product({ id: 'draft', slug: 'draft', published: false }));
+    b.signIn('anon');
+    await docs.refreshDocs();
+    expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['live']);
+  });
+
+  it('removing a category persists the removal', async () => {
+    const { b, catalog } = await stores();
+    await catalog.removeCategory('rugs');
+    expect(b.tables.catalog_docs.some((d) => d.kind === 'category' && d.id === 'rugs')).toBe(false);
+    expect(catalog.getCatalog().categories.some((c) => c.slug === 'rugs')).toBe(false);
   });
 });

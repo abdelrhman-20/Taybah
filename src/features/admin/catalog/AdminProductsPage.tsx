@@ -1,5 +1,6 @@
 import { AssetImage } from '../../shared/components/AssetImage';
 import { useMemo, useState } from 'react';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { Link } from 'react-router';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { productReferenceInfo, useCatalog, removeProduct } from '../../storefront/catalog/catalogStore';
@@ -42,6 +43,7 @@ export function AdminProductsPage() {
   const [availability, setAvailability] = useState('all');
   const [sort, setSort] = useState<SortKey>('name');
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const del = useSaveAction();
 
   const catName = (slug: string) =>
     catalog.categories.find((c) => c.slug === slug)?.name.ar ?? slug;
@@ -300,12 +302,18 @@ export function AdminProductsPage() {
         open={deleteId !== null}
         title="حذف المنتج"
         body={deleteBody}
-        confirmLabel="حذف نهائي"
-        onConfirm={() => {
-          if (deleteId) removeProduct(deleteId);
+        confirmLabel={del.busy ? 'جارٍ الحذف…' : 'حذف نهائي'}
+        confirmDisabled={del.busy}
+        error={del.error}
+        onConfirm={async () => {
+          if (!deleteId) return;
+          const r = await del.run(() => removeProduct(deleteId));
+          if (r.ok) setDeleteId(null);
+        }}
+        onCancel={() => {
+          del.clearError();
           setDeleteId(null);
         }}
-        onCancel={() => setDeleteId(null)}
       />
     </div>
   );

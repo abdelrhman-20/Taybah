@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowRight, Check, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useCatalog, upsertProduct } from '../../storefront/catalog/catalogStore';
+import { useCatalog, productDocOp } from '../../storefront/catalog/catalogStore';
+import { docRevision, writeDocs, type DocOp } from '../../storefront/catalog/catalogDocs';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { generateId } from '../../shared/utils/id';
 import {
   attributeByKey,
+  attributeDocOp,
   attributeValueReferences,
   upsertAttribute,
   useAttributes,
@@ -187,6 +190,21 @@ export function ProductFormPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof Fields, string>>>({});
   const [slugTouched, setSlugTouched] = useState(Boolean(existing));
 
+  // Save lifecycles: the main form, the option-manager dialog, and the
+  // value-delete confirm each report their own busy/error state.
+  const save = useSaveAction();
+  const managerSave = useSaveAction();
+  const valueDelete = useSaveAction();
+  // A new product's id is fixed for the life of the form, so a retry after a
+  // failed attempt can never create a second record.
+  const [newProductId] = useState(() => generateId());
+  // Revision the form opened on. Every write of this product passes it, so a
+  // copy edited elsewhere in the meantime is rejected (conflict) rather than
+  // overwritten; it is advanced after each of OUR OWN confirmed writes.
+  const baseRevision = useRef<number | null>(
+    existing ? docRevision('product', existing.id) : null,
+  );
+
   // Managed option dialogs — one entry point per reserved attribute
   // (الألوان/الخامات/المقاسات) covering selection, renaming, enabling,
   // deletion, and adding new values. Drafts hold unsaved edits keyed by
@@ -349,34 +367,45 @@ export function ProductFormPage() {
       : [];
   const delReferenced = delRefs.length > 0;
 
-  const confirmDeleteValue = () => {
+  const confirmDeleteValue = async () => {
     if (delValue === null) return;
     const { attrKey, valueKey } = delValue;
     const attr = attributeByKey(attrKey);
+    // The attribute change and every product rewrite go out as ONE atomic
+    // write: either all of them persist or none, never a half-rewritten
+    // catalog.
+    const ops: DocOp[] = [];
     if (attr) {
-      upsertAttribute({
-        ...attr,
-        values: attr.values.filter((v) => v.key !== valueKey),
-      });
+      ops.push(
+        attributeDocOp({
+          ...attr,
+          values: attr.values.filter((v) => v.key !== valueKey),
+        }),
+      );
     }
     for (const p of catalog.products) {
+      const isOwn = existing !== undefined && p.id === existing.id;
+      let next: CatalogProduct | null = null;
       if (attrKey === 'size') {
-        if (!p.sizes.includes(valueKey) && p.size !== valueKey) continue;
-        const sizes = p.sizes.filter((s) => s !== valueKey);
-        upsertProduct({
-          ...p,
-          sizes,
-          size: p.size === valueKey ? '' : p.size,
-        });
+        if (p.sizes.includes(valueKey) || p.size === valueKey) {
+          next = {
+            ...p,
+            sizes: p.sizes.filter((s) => s !== valueKey),
+            size: p.size === valueKey ? '' : p.size,
+          };
+        }
       } else if (attrKey === 'color' && p.colors.includes(valueKey)) {
-        upsertProduct({ ...p, colors: p.colors.filter((c) => c !== valueKey) });
+        next = { ...p, colors: p.colors.filter((c) => c !== valueKey) };
       } else if (attrKey === 'material' && p.materials.includes(valueKey)) {
-        upsertProduct({
-          ...p,
-          materials: p.materials.filter((m) => m !== valueKey),
-        });
+        next = { ...p, materials: p.materials.filter((m) => m !== valueKey) };
+      }
+      if (next) {
+        ops.push(productDocOp(next, isOwn ? { expectedRevision: baseRevision.current } : {}));
       }
     }
+    const result = await valueDelete.run(() => writeDocs(ops));
+    if (!result.ok) return; // dialog stays open with the error; nothing changed
+    if (existing) baseRevision.current = docRevision('product', existing.id);
     setFields((f) => {
       if (attrKey === 'size') {
         const sizes = f.sizes.filter((s) => s !== valueKey);
@@ -390,8 +419,8 @@ export function ProductFormPage() {
         return { ...f, colors: f.colors.filter((c) => c !== valueKey) };
       return { ...f, materials: f.materials.filter((m) => m !== valueKey) };
     });
-    setValueDrafts((s) => {
-      const next = { ...s };
+    setValueDrafts((d) => {
+      const next = { ...d };
       delete next[valueKey];
       return next;
     });
@@ -442,7 +471,7 @@ export function ProductFormPage() {
   // New values register in the attribute store immediately (variant axes and
   // storefront filters resolve by key) and are drafted as selected — the
   // product assignment itself applies on «حفظ التعديلات».
-  const addManagerValue = () => {
+  const addManagerValue = async () => {
     if (managerAttr === null) return;
     const attr = attributeByKey(managerAttr);
     if (!attr) return;
@@ -482,7 +511,11 @@ export function ProductFormPage() {
     }
     setManagerError(null);
     if (!attr.values.some((v) => v.key === value.key)) {
-      upsertAttribute({ ...attr, values: [...attr.values, value] });
+      const added = value;
+      const result = await managerSave.run(() =>
+        upsertAttribute({ ...attr, values: [...attr.values, added] }),
+      );
+      if (!result.ok) return; // nothing was saved; the error shows in the dialog
     }
     patchDraft(value.key, {
       selected: true,
@@ -496,72 +529,79 @@ export function ProductFormPage() {
     setNewL('');
   };
 
-  const saveManager = () => {
-    if (managerAttr === null) return;
+  const saveManager = async () => {
+    if (managerAttr === null || managerSave.busy) return;
     const attrKey = managerAttr;
     const attr = attributeByKey(attrKey);
-    if (attr) {
-      upsertAttribute({
-        ...attr,
-        values: attr.values.map((v) => {
-          const d = valueDrafts[v.key];
-          if (!d) return v;
-          const next: AttributeValue = {
-            ...v,
-            label: { ...v.label, ar: d.labelAr.trim() || v.label.ar },
-            enabled: d.enabled,
-          };
-          if (attrKey === 'color') {
-            if (HEX_RE.test(d.hex)) next.hex = d.hex;
-          } else if (attrKey === 'size') {
-            const m = SIZE_DIM_RE.exec(next.label.ar);
-            if (m) {
-              next.widthCm = Number(m[1]);
-              next.lengthCm = Number(m[2]);
-            } else {
-              delete next.widthCm;
-              delete next.lengthCm;
-            }
-          }
-          return next;
-        }),
-      });
-      // Selection applies here too — the dialog replaced the old checkbox
-      // list, so «للمنتج» drafts become this product's assignments
-      // (attribute order). The default size comes from the dialog's own
-      // pick, constrained to what's selected — never auto-filled.
-      const fieldKey = ATTR_FIELD[attrKey];
-      const selected = attr.values
-        .filter(
-          (v) =>
-            valueDrafts[v.key]?.selected ?? fields[fieldKey].includes(v.key),
-        )
-        .map((v) => v.key);
-      const nextSize =
-        attrKey === 'size'
-          ? selected.includes(defaultDraft)
-            ? defaultDraft
-            : ''
-          : undefined;
-      setFields((f) => {
-        if (attrKey === 'size') return { ...f, sizes: selected, size: nextSize ?? '' };
-        if (attrKey === 'color') return { ...f, colors: selected };
-        return { ...f, materials: selected };
-      });
-      // When editing a stored product the assignment persists right away —
-      // the attribute system is its own subsystem (values are global anyway),
-      // so the "incomplete size data" notification clears the moment the fix
-      // is real instead of waiting on the full form submit. The eventual
-      // form save rewrites the same fields.
-      if (existing) {
-        if (attrKey === 'size')
-          upsertProduct({ ...existing, sizes: selected, size: nextSize ?? '' });
-        else if (attrKey === 'color')
-          upsertProduct({ ...existing, colors: selected });
-        else upsertProduct({ ...existing, materials: selected });
-      }
-      setToast('تم حفظ التعديلات بنجاح.');
+    if (!attr) {
+      setManagerAttr(null);
+      return;
     }
+    const nextAttr = {
+      ...attr,
+      values: attr.values.map((v) => {
+        const d = valueDrafts[v.key];
+        if (!d) return v;
+        const next: AttributeValue = {
+          ...v,
+          label: { ...v.label, ar: d.labelAr.trim() || v.label.ar },
+          enabled: d.enabled,
+        };
+        if (attrKey === 'color') {
+          if (HEX_RE.test(d.hex)) next.hex = d.hex;
+        } else if (attrKey === 'size') {
+          const m = SIZE_DIM_RE.exec(next.label.ar);
+          if (m) {
+            next.widthCm = Number(m[1]);
+            next.lengthCm = Number(m[2]);
+          } else {
+            delete next.widthCm;
+            delete next.lengthCm;
+          }
+        }
+        return next;
+      }),
+    };
+    // Selection applies here too — the dialog replaced the old checkbox
+    // list, so «للمنتج» drafts become this product's assignments
+    // (attribute order). The default size comes from the dialog's own
+    // pick, constrained to what's selected — never auto-filled.
+    const fieldKey = ATTR_FIELD[attrKey];
+    const selected = attr.values
+      .filter(
+        (v) => valueDrafts[v.key]?.selected ?? fields[fieldKey].includes(v.key),
+      )
+      .map((v) => v.key);
+    const nextSize =
+      attrKey === 'size'
+        ? selected.includes(defaultDraft)
+          ? defaultDraft
+          : ''
+        : undefined;
+    // When editing a stored product the assignment persists right away —
+    // the attribute system is its own subsystem (values are global anyway),
+    // so the "incomplete size data" notification clears the moment the fix
+    // is real instead of waiting on the full form submit. The attribute and
+    // the product go out as ONE atomic write.
+    const ops: DocOp[] = [attributeDocOp(nextAttr)];
+    if (existing) {
+      const patched: CatalogProduct =
+        attrKey === 'size'
+          ? { ...existing, sizes: selected, size: nextSize ?? '' }
+          : attrKey === 'color'
+            ? { ...existing, colors: selected }
+            : { ...existing, materials: selected };
+      ops.push(productDocOp(patched, { expectedRevision: baseRevision.current }));
+    }
+    const result = await managerSave.run(() => writeDocs(ops));
+    if (!result.ok) return; // dialog stays open, drafts intact, nothing saved
+    if (existing) baseRevision.current = docRevision('product', existing.id);
+    setFields((f) => {
+      if (attrKey === 'size') return { ...f, sizes: selected, size: nextSize ?? '' };
+      if (attrKey === 'color') return { ...f, colors: selected };
+      return { ...f, materials: selected };
+    });
+    setToast('تم حفظ التعديلات بنجاح.');
     setManagerAttr(null);
   };
 
@@ -638,9 +678,9 @@ export function ProductFormPage() {
     return Object.keys(e).length === 0;
   };
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
+    if (save.busy || !validate()) return;
     const allImages = [
       fields.image.trim(),
       fields.imageHover.trim(),
@@ -686,7 +726,7 @@ export function ProductFormPage() {
       variantPart = {};
     }
     const product: CatalogProduct = {
-      id: existing?.id ?? generateId(),
+      id: existing?.id ?? newProductId,
       name: { ar: fields.nameAr.trim(), en: fields.nameEn.trim() },
       description: { ar: fields.descAr.trim(), en: fields.descEn.trim() },
       sku: fields.sku.trim(),
@@ -716,7 +756,12 @@ export function ProductFormPage() {
       ...variantPart,
       createdAt: existing?.createdAt ?? new Date().toISOString().slice(0, 10),
     };
-    upsertProduct(product);
+    // The form only leaves after the server confirmed AND a read-back
+    // matched; on failure it stays open with every field intact.
+    const result = await save.run(() =>
+      writeDocs([productDocOp(product, { expectedRevision: baseRevision.current })]),
+    );
+    if (!result.ok) return;
     navigate(`/admin/products/${product.id}`, {
       state: { saved: existing ? 'updated' : 'created' },
     });
@@ -949,12 +994,18 @@ export function ProductFormPage() {
           </div>
         </section>
 
+        {save.error && (
+          <p role="alert" className="text-sm font-medium text-burgundy">
+            {save.error}
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <button
             type="submit"
-            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+            disabled={save.busy}
+            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
           >
-            {existing ? 'حفظ التعديلات' : 'إضافة المنتج'}
+            {save.busy ? 'جارٍ الحفظ…' : existing ? 'حفظ التعديلات' : 'إضافة المنتج'}
           </button>
           <Link
             to="/admin/products"
@@ -1163,6 +1214,11 @@ export function ProductFormPage() {
               {managerError && (
                 <p className="mt-1.5 text-xs text-burgundy">{managerError}</p>
               )}
+              {managerSave.error && (
+                <p role="alert" className="mt-1.5 text-xs font-medium text-burgundy">
+                  {managerSave.error}
+                </p>
+              )}
               {managerAttr === 'size' && (
                 <p className="mt-1.5 text-[11px] text-espresso/50">
                   مثال: اكتب 280 و200 لإضافة مقاس «280 × 200 سم» — يُضاف للقائمة ويُحدَّد للمنتج تلقائيًا.
@@ -1181,9 +1237,10 @@ export function ProductFormPage() {
               <button
                 type="button"
                 onClick={saveManager}
-                className="rounded bg-burgundy px-5 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+                disabled={managerSave.busy}
+                className="rounded bg-burgundy px-5 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
               >
-                حفظ التعديلات
+                {managerSave.busy ? 'جارٍ الحفظ…' : 'حفظ التعديلات'}
               </button>
             </div>
           </div>
@@ -1213,8 +1270,13 @@ export function ProductFormPage() {
               ? `حذف ${ATTR_SINGULAR[delValue.attrKey]}`
               : undefined
         }
+        confirmDisabled={valueDelete.busy}
+        error={valueDelete.error}
         onConfirm={confirmDeleteValue}
-        onCancel={() => setDelValue(null)}
+        onCancel={() => {
+          valueDelete.clearError();
+          setDelValue(null);
+        }}
       />
 
       {toast && (

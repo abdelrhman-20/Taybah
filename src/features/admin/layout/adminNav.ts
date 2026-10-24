@@ -1,4 +1,5 @@
 import {
+  DatabaseBackup,
   FolderTree,
   Images,
   LayoutDashboard,
@@ -33,5 +34,6 @@ export const adminNav: AdminNavItem[] = [
   { key: 'attributes', label: 'السمات', path: '/admin/attributes', icon: SwatchBook },
   { key: 'customers', label: 'العملاء', path: '/admin/customers', icon: Users },
   { key: 'promotions', label: 'العروض', path: '/admin/promotions', icon: TicketPercent },
+  { key: 'migration', label: 'النسخ الاحتياطي والترحيل', path: '/admin/migration', icon: DatabaseBackup },
   { key: 'settings', label: 'الإعدادات', path: '/admin/settings', icon: Settings },
 ];

@@ -1,11 +1,12 @@
 import { useSyncExternalStore } from 'react';
+import { getDoc, getDocsState, subscribeDocs, writeDocs, type DocPut } from '../catalog/catalogDocs';
 
-// STOREFRONT NAVIGATION STORE — shared reactive config for the public header
-// (desktop + mobile) and footer link columns. Admin edits persist to
-// localStorage and appear immediately; the internal Admin sidebar is managed
-// separately in features/admin/layout/adminNav.ts and is unaffected.
-
-const STORAGE_KEY = 'taybah:navigation';
+// STOREFRONT NAVIGATION STORE — typed view over the persistent navigation
+// documents (public.catalog_docs, kind 'nav', ids 'main' and 'footer'; see
+// catalogDocs.ts). Shared by the public header (desktop + mobile) and footer
+// link columns. Until the catalog is migrated (`initialized`) the built-in
+// default menus are served. Mutations resolve only after the server confirmed
+// the write. The internal Admin sidebar is separate (admin/layout/adminNav.ts).
 
 export type NavGroup = 'main' | 'footer';
 export type NavItemKind = 'internal' | 'external';
@@ -48,7 +49,7 @@ function item(
   return { id, label, path, kind, visible: true };
 }
 
-function defaultNav(): StorefrontNavState {
+export function defaultNav(): StorefrontNavState {
   return {
     main: [
       item('shop', 'تسوق الكل', '/products'),
@@ -113,7 +114,7 @@ function sanitizeItems(list: unknown, allowChildren: boolean): StorefrontNavItem
 
 // Stored groups win as-is; missing groups seed from defaults. Unsafe stored
 // destinations are dropped rather than rendered.
-function migrate(raw: Partial<StorefrontNavState> | null): StorefrontNavState {
+export function migrateNav(raw: Partial<StorefrontNavState> | null): StorefrontNavState {
   const defaults = defaultNav();
   if (!raw || typeof raw !== 'object') return defaults;
   const main = raw.main === undefined ? defaults.main : sanitizeItems(raw.main, true);
@@ -121,77 +122,71 @@ function migrate(raw: Partial<StorefrontNavState> | null): StorefrontNavState {
   return { main, footer };
 }
 
-function readAll(): StorefrontNavState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultNav();
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return defaultNav();
-    return migrate(parsed as Partial<StorefrontNavState>);
-  } catch {
-    return defaultNav();
-  }
+interface NavDocData { items?: unknown }
+
+function derive(): StorefrontNavState {
+  if (!getDocsState().initialized) return defaultNav();
+  const defaults = defaultNav();
+  const group = (g: NavGroup): unknown[] | undefined => {
+    const d = getDoc('nav', g);
+    const items = (d?.data as NavDocData | undefined)?.items;
+    return Array.isArray(items) ? items : undefined;
+  };
+  const main = group('main');
+  const footer = group('footer');
+  return migrateNav({
+    main: main as StorefrontNavItem[] | undefined,
+    footer: footer as StorefrontNavItem[] | undefined,
+  }) ?? defaults;
 }
 
-let nav: StorefrontNavState = readAll();
-const listeners = new Set<() => void>();
+let cache: { version: number; value: StorefrontNavState } | null = null;
 
-function persist(next: StorefrontNavState) {
-  nav = next;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nav));
-  } catch {
-    // storage unavailable — state lives in memory for this session
-  }
-  listeners.forEach((l) => l());
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === STORAGE_KEY) {
-      nav = readAll();
-      listeners.forEach((l) => l());
-    }
-  });
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+export function getNavigation(): StorefrontNavState {
+  const version = getDocsState().version;
+  if (!cache || cache.version !== version) cache = { version, value: derive() };
+  return cache.value;
 }
 
 export function useNavigation(): StorefrontNavState {
-  return useSyncExternalStore(subscribe, () => nav);
+  return useSyncExternalStore(subscribeDocs, getNavigation);
 }
 
-export function saveNavGroup(group: NavGroup, items: StorefrontNavItem[]) {
-  persist({ ...nav, [group]: items });
+export function navDocOp(group: NavGroup, items: StorefrontNavItem[]): DocPut {
+  return {
+    op: 'put',
+    kind: 'nav',
+    id: group,
+    slug: null,
+    visible: true,
+    sortOrder: group === 'main' ? 0 : 1,
+    data: { items },
+  };
 }
 
-export function upsertNavItem(group: NavGroup, item: StorefrontNavItem) {
-  const list = nav[group];
+export function saveNavGroup(group: NavGroup, items: StorefrontNavItem[]): Promise<void> {
+  return writeDocs([navDocOp(group, items)]);
+}
+
+export function upsertNavItem(group: NavGroup, item: StorefrontNavItem): Promise<void> {
+  const list = getNavigation()[group];
   const exists = list.some((i) => i.id === item.id);
-  saveNavGroup(
+  return saveNavGroup(
     group,
     exists ? list.map((i) => (i.id === item.id ? item : i)) : [...list, item],
   );
 }
 
-export function removeNavItem(group: NavGroup, id: string) {
-  saveNavGroup(group, nav[group].filter((i) => i.id !== id));
+export function removeNavItem(group: NavGroup, id: string): Promise<void> {
+  return saveNavGroup(group, getNavigation()[group].filter((i) => i.id !== id));
 }
 
-export function resetNavigation() {
-  persist(defaultNav());
+// Restores BOTH menus to the built-in defaults in one atomic write.
+export function resetNavigation(): Promise<void> {
+  const d = defaultNav();
+  return writeDocs([navDocOp('main', d.main), navDocOp('footer', d.footer)]);
 }
 
-// Flattens the main menu into footer-safe links. The footer always stays
-// flat (sanitizeItems never gives footer items children), but a main-menu
-// item can be a pure dropdown trigger (`path === ''` with `children`) —
-// rendering one as-is in the footer would be a dead link to the homepage
-// with its children silently dropped. Mirrors DesktopNav.tsx's own
-// path-vs-children handling: keep the item only when it has a real
-// destination of its own, and always flatten in its visible children.
 export function flattenForFooter(main: StorefrontNavItem[]): StorefrontNavItem[] {
   return main
     .filter((i) => i.visible)

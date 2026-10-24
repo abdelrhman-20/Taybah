@@ -6,6 +6,8 @@ import {
   upsertCollection,
   useCatalog,
 } from '../../storefront/catalog/catalogStore';
+import { docRevision } from '../../storefront/catalog/catalogDocs';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { ImageUploadField } from '../components/ImageUploadField';
 
@@ -72,6 +74,10 @@ export function TaxonomyFormPage({ kind }: { kind: 'category' | 'collection' }) 
         },
   );
   const [errors, setErrors] = useState<Partial<Record<keyof typeof fields, string>>>({});
+  const save = useSaveAction();
+  // Revision this form was opened on: a save made on top of an outdated copy
+  // is rejected (conflict) instead of overwriting newer changes.
+  const [baseRevision] = useState(() => (existing ? docRevision(kind, existing.slug) : null));
 
   if (id && !existing) {
     return (
@@ -92,8 +98,9 @@ export function TaxonomyFormPage({ kind }: { kind: 'category' | 'collection' }) 
   const err = (key: keyof typeof fields) =>
     errors[key] ? <p className="mt-1.5 text-xs text-burgundy">{errors[key]}</p> : null;
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (save.busy) return;
     const errs: Partial<Record<keyof typeof fields, string>> = {};
     if (fields.nameAr.trim().length < 2) errs.nameAr = 'الاسم بالعربي مطلوب (حرفان على الأقل).';
     if (!SLUG_RE.test(fields.slug.trim()))
@@ -115,9 +122,11 @@ export function TaxonomyFormPage({ kind }: { kind: 'category' | 'collection' }) 
       visible: fields.visible,
       order,
     };
-    if (kind === 'category') upsertCategory(record);
-    else upsertCollection(record);
-    navigate(t.listPath);
+    const opts = { expectedRevision: baseRevision };
+    const result = await save.run(() =>
+      kind === 'category' ? upsertCategory(record, opts) : upsertCollection(record, opts),
+    );
+    if (result.ok) navigate(t.listPath);
   };
 
   return (
@@ -210,12 +219,18 @@ export function TaxonomyFormPage({ kind }: { kind: 'category' | 'collection' }) 
           </label>
         </section>
 
+        {save.error && (
+          <p role="alert" className="text-sm font-medium text-burgundy">
+            {save.error}
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <button
             type="submit"
-            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+            disabled={save.busy}
+            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
           >
-            {t.save}
+            {save.busy ? 'جارٍ الحفظ…' : t.save}
           </button>
           <Link to={t.listPath} className="text-sm font-medium text-espresso/60 transition hover:text-espresso">
             إلغاء

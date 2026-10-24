@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { Link } from 'react-router';
 import {
   ArrowDown,
@@ -32,6 +33,8 @@ export function AdminAttributesPage() {
   const attrs = useAttributes();
   const { categories } = useCatalog();
   const [del, setDel] = useState<string | null>(null);
+  const delAction = useSaveAction();
+  const edit = useSaveAction();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<AttributeStatusFilter>('all');
 
@@ -54,11 +57,13 @@ export function AdminAttributesPage() {
       const j = idx === i ? t : idx === t ? i : idx;
       return { ...a, order: j + 1 };
     });
-    saveAttributes(next);
+    void edit.run(() => saveAttributes(next));
   };
 
   const toggleEnabled = (key: string) =>
-    saveAttributes(attrs.map((a) => (a.key === key ? { ...a, enabled: !a.enabled } : a)));
+    void edit.run(() =>
+      saveAttributes(attrs.map((a) => (a.key === key ? { ...a, enabled: !a.enabled } : a))),
+    );
 
   const catLabel = (a: (typeof attrs)[number]) =>
     a.categories.length === 0
@@ -73,6 +78,12 @@ export function AdminAttributesPage() {
         title="السمات"
         description="تعريفات خيارات المنتجات — الألوان والخامات والمقاسات وأي سمات مخصصة. المنتجات تحتفظ باختياراتها؛ هذه الصفحة تدير التعريفات والقيم فقط."
       />
+
+      {edit.error && (
+        <p role="alert" className="mt-3 text-sm font-medium text-burgundy">
+          {edit.error}
+        </p>
+      )}
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <label className="relative min-w-56 flex-1">
@@ -259,17 +270,23 @@ export function AdminAttributesPage() {
               : `حذف «${delTarget.name.ar}» وقيمها نهائيًا؟ لا توجد مراجع إليها — يمكن الحذف بأمان ولا يمكن التراجع.`
             : ''
         }
-        confirmLabel={blocked ? undefined : 'حذف نهائي'}
+        confirmLabel={blocked ? undefined : delAction.busy ? 'جارٍ الحذف…' : 'حذف نهائي'}
         cancelLabel={blocked ? 'حسنًا' : 'إلغاء'}
+        confirmDisabled={delAction.busy}
+        error={delAction.error}
         onConfirm={
           blocked
             ? undefined
-            : () => {
-                if (del) removeAttribute(del);
-                setDel(null);
+            : async () => {
+                if (!del) return;
+                const r = await delAction.run(() => removeAttribute(del));
+                if (r.ok) setDel(null);
               }
         }
-        onCancel={() => setDel(null)}
+        onCancel={() => {
+          delAction.clearError();
+          setDel(null);
+        }}
       />
     </div>
   );

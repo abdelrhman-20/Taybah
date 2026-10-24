@@ -34,6 +34,7 @@ import { AdminHomepagePage } from '../../features/admin/homepage/AdminHomepagePa
 import { HomeSectionEditRoute } from '../../features/admin/homepage/HomeSectionEditPage';
 import { AdminNavigationPage } from '../../features/admin/navigation/AdminNavigationPage';
 import { AdminMediaPage } from '../../features/admin/media/AdminMediaPage';
+import { AdminMigrationPage } from '../../features/admin/migration/AdminMigrationPage';
 import { AdminAttributesPage } from '../../features/admin/attributes/AdminAttributesPage';
 import { AttributeFormPage } from '../../features/admin/attributes/AttributeFormPage';
 import { adminNav } from '../../features/admin/layout/adminNav';
@@ -92,13 +93,14 @@ export const router = createBrowserRouter(
       { path: 'homepage/:sectionKey', element: <HomeSectionEditRoute /> },
       { path: 'navigation', element: <AdminNavigationPage /> },
       { path: 'media', element: <AdminMediaPage /> },
+      { path: 'migration', element: <AdminMigrationPage /> },
       { path: 'attributes', element: <AdminAttributesPage /> },
       { path: 'attributes/new', element: <AttributeFormPage /> },
       { path: 'attributes/:attrKey', element: <AttributeFormPage /> },
       ...adminNav
         .filter(
           (i) =>
-            !['dashboard', 'orders', 'products', 'categories', 'collections', 'homepage', 'navigation', 'media', 'attributes'].includes(i.key),
+            !['dashboard', 'orders', 'products', 'categories', 'collections', 'homepage', 'navigation', 'media', 'attributes', 'migration'].includes(i.key),
         )
         .map((i) => ({
           path: i.path.replace('/admin/', ''),

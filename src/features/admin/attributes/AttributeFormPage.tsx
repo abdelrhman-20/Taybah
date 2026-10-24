@@ -11,6 +11,8 @@ import {
   type AttributeDisplay,
 } from '../../storefront/catalog/attributeStore';
 import { useCatalog } from '../../storefront/catalog/catalogStore';
+import { docRevision } from '../../storefront/catalog/catalogDocs';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
@@ -107,6 +109,9 @@ export function AttributeFormPage() {
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [delValue, setDelValue] = useState<string | null>(null);
+  const save = useSaveAction();
+  // Revision the form opened on — a save over a newer copy is rejected.
+  const [baseRevision] = useState(() => (existing ? docRevision('attribute', existing.key) : null));
 
   if (attrKey && !existing) {
     return (
@@ -186,9 +191,9 @@ export function AttributeFormPage() {
     return Object.keys(e).length === 0;
   };
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
+    if (save.busy || !validate()) return;
     const attr: AttributeDef = {
       key: fields.key.trim(),
       name: { ar: fields.nameAr.trim(), en: fields.nameEn.trim() },
@@ -207,8 +212,10 @@ export function AttributeFormPage() {
         order: i + 1,
       })),
     };
-    upsertAttribute(attr);
-    navigate('/admin/attributes');
+    const result = await save.run(() =>
+      upsertAttribute(attr, { expectedRevision: baseRevision }),
+    );
+    if (result.ok) navigate('/admin/attributes');
   };
 
   return (
@@ -503,12 +510,18 @@ export function AttributeFormPage() {
           )}
         </section>
 
+        {save.error && (
+          <p role="alert" className="text-sm font-medium text-burgundy">
+            {save.error}
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <button
             type="submit"
-            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+            disabled={save.busy}
+            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
           >
-            {existing ? 'حفظ السمة' : 'إضافة السمة'}
+            {save.busy ? 'جارٍ الحفظ…' : existing ? 'حفظ السمة' : 'إضافة السمة'}
           </button>
           <Link to="/admin/attributes" className="text-sm font-medium text-espresso/60 transition hover:text-espresso">
             إلغاء

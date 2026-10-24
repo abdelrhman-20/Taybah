@@ -1,17 +1,16 @@
 import { getCatalog } from '../../storefront/catalog/catalogStore';
 import { getHomeContent } from '../../storefront/home/homeStore';
 import { getOrders } from '../../storefront/checkout/orderStore';
-import { LOCAL_IMAGE_PREFIX } from './imageStore';
 
-// IMAGE REFERENCE SCAN — finds every saved entity still pointing at a local
-// asset (`local:<id>`) before permanent deletion. Scans products (including
+// IMAGE REFERENCE SCAN — finds every saved entity still pointing at an image
+// ref (`media:<path>` in Storage, or a legacy `local:<id>`) before permanent
+// deletion. Scans products (including
 // per-variant images), categories, collections, homepage sections, and order
 // line snapshots. Used by the media library delete guard; deletion is blocked
-// while any reference remains. Variants store only the same `local:` ref
-// string — the shared blob is never duplicated.
+// while any reference remains. Variants store only the same ref string —
+// the shared file is never duplicated.
 
-export function imageReferences(assetId: string): string[] {
-  const ref = `${LOCAL_IMAGE_PREFIX}${assetId}`;
+export function imageReferences(ref: string): string[] {
   const uses: string[] = [];
   const catalog = getCatalog();
 

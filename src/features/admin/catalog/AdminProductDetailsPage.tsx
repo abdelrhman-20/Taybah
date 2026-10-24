@@ -1,5 +1,6 @@
 import { AssetImage } from '../../shared/components/AssetImage';
 import { useEffect, useState } from 'react';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { ArrowRight, Check, Pencil, Trash2, X } from 'lucide-react';
 import { productReferenceInfo, removeProduct, useCatalog } from '../../storefront/catalog/catalogStore';
@@ -34,6 +35,7 @@ export function AdminProductDetailsPage() {
   useAttributes(); // option labels resolve from the attribute store
   const product = catalog.products.find((p) => p.id === productId);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const del = useSaveAction();
 
   // Flash success banner after the product form's save — the form navigates
   // here with a `saved` flag in router state; consumed once (state cleared
@@ -281,12 +283,17 @@ export function AdminProductDetailsPage() {
               : '';
           return `حذف «${product.name.ar}» نهائيًا؟ سيختفي من المتجر ومن قوائم الإدارة — لا يمكن التراجع.${touchesNote}${ordersNote}`;
         })()}
-        confirmLabel="حذف نهائي"
-        onConfirm={() => {
-          removeProduct(product.id);
-          navigate('/admin/products');
+        confirmLabel={del.busy ? 'جارٍ الحذف…' : 'حذف نهائي'}
+        confirmDisabled={del.busy}
+        error={del.error}
+        onConfirm={async () => {
+          const r = await del.run(() => removeProduct(product.id));
+          if (r.ok) navigate('/admin/products');
         }}
-        onCancel={() => setConfirmDelete(false)}
+        onCancel={() => {
+          del.clearError();
+          setConfirmDelete(false);
+        }}
       />
     </div>
   );

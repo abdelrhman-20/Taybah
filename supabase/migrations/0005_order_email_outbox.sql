@@ -13,6 +13,25 @@
 -- 'sent'. A failed/missing email never blocks the status update itself.
 
 -- ============================================================================
+-- Pre-flight: refuse to run if it could lock the admin out of orders
+-- ============================================================================
+-- Section 7 restricts order read/update to rows in public.admins. If that
+-- table is empty (or 0003 was never applied) every admin would see an empty
+-- orders list. Abort BEFORE changing anything; the SQL editor runs this
+-- script as one transaction, so an abort leaves the database untouched.
+
+do $$
+begin
+  if to_regclass('public.admins') is null or to_regprocedure('public.is_admin()') is null then
+    raise exception 'ABORT: migration 0003 (public.admins / is_admin()) has not been applied.';
+  end if;
+  if not exists (select 1 from public.admins) then
+    raise exception 'ABORT: public.admins is empty. Add your admin user first: insert into public.admins (user_id) values (''<your auth.users id>''); — otherwise this migration would lock you out of the orders admin.';
+  end if;
+end;
+$$;
+
+-- ============================================================================
 -- 0. Retire the old fire-and-forget trigger (hardcoded key, no retries)
 -- ============================================================================
 

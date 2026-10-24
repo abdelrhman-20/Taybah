@@ -3,12 +3,14 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { removeCategory, useCatalog } from '../../storefront/catalog/catalogStore';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
 export function AdminCategoriesPage() {
   const catalog = useCatalog();
   const [deleteSlug, setDeleteSlug] = useState<string | null>(null);
+  const del = useSaveAction();
 
   const sorted = [...catalog.categories].sort((a, b) => a.order - b.order);
   const target = catalog.categories.find((c) => c.slug === deleteSlug);
@@ -98,17 +100,23 @@ export function AdminCategoriesPage() {
               : `حذف «${target.name.ar}» نهائيًا؟ لا توجد منتجات مرتبطة به — يمكن الحذف بأمان.`
             : ''
         }
-        confirmLabel={blocked ? undefined : 'حذف نهائي'}
+        confirmLabel={blocked ? undefined : del.busy ? 'جارٍ الحذف…' : 'حذف نهائي'}
         cancelLabel={blocked ? 'حسنًا' : 'إلغاء'}
+        confirmDisabled={del.busy}
+        error={del.error}
         onConfirm={
           blocked
             ? undefined
-            : () => {
-                if (deleteSlug) removeCategory(deleteSlug);
-                setDeleteSlug(null);
+            : async () => {
+                if (!deleteSlug) return;
+                const r = await del.run(() => removeCategory(deleteSlug));
+                if (r.ok) setDeleteSlug(null);
               }
         }
-        onCancel={() => setDeleteSlug(null)}
+        onCancel={() => {
+          del.clearError();
+          setDeleteSlug(null);
+        }}
       />
     </div>
   );

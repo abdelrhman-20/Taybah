@@ -1,38 +1,25 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { ImagePlus, Images, RefreshCw, Trash2 } from 'lucide-react';
+import { isLocalImageRef } from '../../shared/assets/imageStore';
 import {
   ACCEPTED_IMAGE_TYPES,
   MAX_IMAGE_MB,
-  isLocalImageRef,
-  localImageRef,
-  saveImageBlob,
-} from '../../shared/assets/imageStore';
+  isMediaRef,
+  uploadImage,
+  validateImage,
+} from '../../shared/assets/mediaStorage';
+import { notifyMediaChanged } from '../../shared/assets/mediaLibrary';
+import { PersistenceError, describePersistenceError } from '../../../lib/persistence/errors';
 import { AssetImage } from '../../shared/components/AssetImage';
 import { ImagePickerDialog } from './ImagePickerDialog';
 
-// Reusable Arabic RTL image picker — stores the selected file as a Blob in
-// IndexedDB and emits a `local:<id>` reference via onChange. External URLs
-// already stored on records keep previewing unchanged. Removing clears the
-// field's reference only; the blob is retained in IndexedDB deliberately
-// (other entities may still reference the same asset — safe-cleanup policy).
-
-async function sniffMagicBytes(file: File): Promise<'jpeg' | 'png' | 'webp' | null> {
-  const buf = new Uint8Array(await file.slice(0, 12).arrayBuffer());
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpeg';
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png';
-  if (
-    String.fromCharCode(...buf.slice(0, 4)) === 'RIFF' &&
-    String.fromCharCode(...buf.slice(8, 12)) === 'WEBP'
-  )
-    return 'webp';
-  return null;
-}
-
-const MAGIC_TO_MIME: Record<NonNullable<Awaited<ReturnType<typeof sniffMagicBytes>>>, string> = {
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-  webp: 'image/webp',
-};
+// Reusable Arabic RTL image picker — validates the file, uploads it to
+// Supabase Storage (bucket storefront-media), verifies the object landed, and
+// only then emits a stable `media:<path>` reference via onChange. Nothing is
+// stored in the browser. External URLs and legacy `local:` refs already on
+// records keep previewing unchanged. Removing clears the field's reference
+// only; the stored file is retained (other entities may reference it) and can
+// be deleted from the media library once unreferenced.
 
 export function ImageUploadField({
   id,
@@ -66,30 +53,22 @@ export function ImageUploadField({
   const handleFile = async (file: File | undefined) => {
     if (!file || busy) return;
     setLocalError(null);
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type as (typeof ACCEPTED_IMAGE_TYPES)[number])) {
-      setLocalError('صيغة غير مدعومة — اختر صورة JPEG أو PNG أو WebP.');
-      return;
-    }
-    if (file.size > maxSizeMB * 1024 * 1024) {
-      setLocalError(`حجم الصورة يتجاوز ${maxSizeMB} ميجابايت — اختر ملفًا أصغر.`);
-      return;
-    }
     setBusy(true);
     try {
-      // Verify the real file signature — MIME/extension alone can lie.
-      const magic = await sniffMagicBytes(file);
-      if (!magic || MAGIC_TO_MIME[magic] !== file.type) {
-        setLocalError('محتوى الملف لا يطابق نوعه — اختر صورة صالحة.');
+      // Type allow-list, size cap and real file-signature check.
+      const valid = await validateImage(file, maxSizeMB);
+      if (!valid.ok) {
+        setLocalError(valid.message);
         return;
       }
-      const assetId = await saveImageBlob(file, { name: file.name });
-      onChange(localImageRef(assetId));
+      const { ref } = await uploadImage(file);
+      notifyMediaChanged();
+      onChange(ref);
     } catch (err) {
-      const quota = err instanceof DOMException && err.name === 'QuotaExceededError';
       setLocalError(
-        quota
-          ? 'مساحة التخزين المحلي ممتلئة — احذف بعض الصور من مكتبة الوسائط ثم حاول مرة أخرى.'
-          : 'تعذر حفظ الصورة محليًا — حاول مرة أخرى.',
+        err instanceof PersistenceError && err.code === 'invalid'
+          ? err.detail
+          : describePersistenceError(err).replace('لم يُحفظ شيء.', 'لم تُرفع الصورة.'),
       );
     } finally {
       setBusy(false);
@@ -129,7 +108,7 @@ export function ImageUploadField({
           disabled={busy}
           className="rounded border border-espresso/25 px-3 py-1.5 text-xs font-medium text-espresso transition hover:border-burgundy hover:text-burgundy disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-burgundy"
         >
-          {busy ? 'جارٍ المعالجة…' : value ? 'استبدال' : 'اختيار صورة'}
+          {busy ? 'جارٍ الرفع…' : value ? 'استبدال' : 'اختيار صورة'}
         </button>
         <button
           type="button"
@@ -204,7 +183,7 @@ export function ImageUploadField({
               <Trash2 className="size-3.5" aria-hidden /> إزالة الصورة
             </button>
             <span className="font-mono text-[10px] text-espresso/40" dir="ltr">
-              {isLocalImageRef(value) ? 'محلي — IndexedDB' : value.slice(0, 48)}
+              {isMediaRef(value) ? 'مخزّنة على الخادم' : isLocalImageRef(value) ? 'محلية في هذا المتصفح فقط — لم تُرحَّل' : value.slice(0, 48)}
             </span>
           </div>
         </div>
@@ -226,7 +205,7 @@ export function ImageUploadField({
         >
           <ImagePlus className="size-6 text-espresso/40" aria-hidden />
           <span className="text-sm font-medium text-espresso/70">
-            {busy ? 'جارٍ المعالجة…' : 'اختر صورة من جهازك أو أفلتها هنا'}
+            {busy ? 'جارٍ الرفع…' : 'اختر صورة من جهازك أو أفلتها هنا'}
           </span>
           <span className="text-[11px] text-espresso/45">
             JPEG · PNG · WebP — حتى {maxSizeMB} ميجابايت

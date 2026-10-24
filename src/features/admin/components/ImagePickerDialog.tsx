@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { localImageRef, useImageAssets } from '../../shared/assets/imageStore';
+import { useMediaLibrary } from '../../shared/assets/mediaLibrary';
 import { AssetImage } from '../../shared/components/AssetImage';
 
 // Shared media-library picker — lets any Admin image field reuse an already
-// uploaded asset (emits the existing `local:<id>` reference; never duplicates
-// the blob). Search by filename, single selection, confirm/cancel, Escape
+// uploaded asset (emits the existing `media:<path>` reference; never
+// duplicates the file). Search by filename, single selection, confirm/cancel, Escape
 // closes, responsive grid.
 export function ImagePickerDialog({
   open,
@@ -28,7 +28,7 @@ function PickerBody({
   onSelect: (ref: string) => void;
   onCancel: () => void;
 }) {
-  const assets = useImageAssets();
+  const { items: assets, error: loadError } = useMediaLibrary();
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
 
@@ -89,6 +89,11 @@ function PickerBody({
           />
         </div>
 
+        {loadError && (
+          <p role="alert" className="mt-3 text-xs text-burgundy">
+            تعذّر تحميل صور الخادم — قد لا تظهر كل الصور. أعد فتح المكتبة للمحاولة مجددًا.
+          </p>
+        )}
         <div className="mt-4 min-h-40 flex-1 overflow-y-auto">
           {assets === null ? (
             <p className="py-14 text-center text-sm text-espresso/55">جارٍ تحميل المكتبة…</p>
@@ -101,19 +106,19 @@ function PickerBody({
           ) : (
             <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
               {filtered.map((a) => {
-                const on = picked === a.id;
+                const on = picked === a.ref;
                 return (
-                  <li key={a.id}>
+                  <li key={a.ref}>
                     <button
                       type="button"
-                      onClick={() => setPicked(a.id)}
+                      onClick={() => setPicked(a.ref)}
                       aria-pressed={on}
                       className={`group block w-full rounded border text-start transition focus-visible:outline-2 focus-visible:outline-burgundy ${
                         on ? 'border-burgundy ring-1 ring-burgundy' : 'border-taupe hover:border-espresso/40'
                       }`}
                     >
                       <AssetImage
-                        src={localImageRef(a.id)}
+                        src={a.ref}
                         alt={a.name}
                         className="aspect-[4/3] w-full rounded-t object-cover"
                       />
@@ -139,7 +144,7 @@ function PickerBody({
           <button
             type="button"
             disabled={!picked}
-            onClick={() => picked && onSelect(localImageRef(picked))}
+            onClick={() => picked && onSelect(picked)}
             className="rounded bg-burgundy px-5 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-burgundy"
           >
             اختيار الصورة

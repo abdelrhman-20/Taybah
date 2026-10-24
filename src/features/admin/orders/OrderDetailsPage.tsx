@@ -6,11 +6,15 @@ import {
   ORDER_STATUS_LABELS_AR,
   ORDER_STATUSES,
   useOrder,
+  useOrdersLoadState,
+  reloadOrders,
   updateOrderStatus,
   type OrderStatus,
 } from '../../storefront/checkout/orderStore';
 import { checkoutCountries, deliveryMethods, egyptGovernorates } from '../../storefront/checkout/checkoutData';
 import { attributeValueLabel } from '../../storefront/catalog/attributeStore';
+import { describePersistenceError } from '../../../lib/persistence/errors';
+import { LoadingState } from '../../shared/components/LoadingState';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { OrderEmailLog } from './OrderEmailLog';
@@ -32,21 +36,56 @@ export function OrderDetailsPage() {
   const { orderId } = useParams();
   const order = useOrder(orderId);
   const [pendingStatus, setPendingStatus] = useState<OrderStatus | null>(null);
-  const [statusError, setStatusError] = useState(false);
+  const loadState = useOrdersLoadState();
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
 
+  // Resolves only when the database confirmed the change (a zero-row update
+  // is an error, not a success). Passing the status this screen is showing
+  // makes the update conditional: if someone else changed it meanwhile the
+  // save is refused instead of silently overwriting.
   const applyStatus = (status: OrderStatus) => {
-    setStatusError(false);
-    updateOrderStatus(order!.id, status)
+    if (applying || !order) return;
+    setStatusError(null);
+    setApplying(true);
+    updateOrderStatus(order.id, status, order.status)
       .then(() => setPendingStatus(null))
-      .catch(() => setStatusError(true));
+      .catch((e: unknown) => {
+        console.error('Order status update failed:', e instanceof Error ? e.message : e);
+        setStatusError(describePersistenceError(e));
+        void reloadOrders();
+      })
+      .finally(() => setApplying(false));
   };
+
+  if (!order && (loadState.status === 'loading' || loadState.status === 'idle')) {
+    return <LoadingState label="جارٍ تحميل الطلب…" />;
+  }
+
+  if (!order && loadState.status === 'error') {
+    return (
+      <div className="mx-auto max-w-4xl">
+        <AdminPageHeader title="تعذّر تحميل الطلب" />
+        <p role="alert" className="text-sm text-burgundy">
+          لم نتمكن من تحميل الطلبات من الخادم — هذا لا يعني أن الطلب غير موجود.
+        </p>
+        <button
+          type="button"
+          onClick={() => void reloadOrders()}
+          className="mt-4 rounded border border-espresso/25 px-5 py-2 text-sm font-medium text-espresso transition hover:border-espresso"
+        >
+          إعادة المحاولة
+        </button>
+      </div>
+    );
+  }
 
   if (!order) {
     return (
       <div className="mx-auto max-w-4xl">
         <AdminPageHeader title="الطلب غير موجود" />
         <p className="text-sm text-espresso/60">
-          مرجع هذا الطلب غير موجود في البيانات التجريبية.
+          لا يوجد طلب بهذا المرجع.
         </p>
         <Link
           to="/admin/orders"
@@ -110,6 +149,7 @@ export function OrderDetailsPage() {
             id="od-status"
             value={pendingStatus ?? order.status}
             onChange={(e) => setPendingStatus(e.target.value as OrderStatus)}
+            disabled={applying}
             className="border border-taupe bg-white px-3 py-2 text-sm text-espresso focus:border-burgundy focus:outline-1 focus:outline-burgundy"
           >
             {ORDER_STATUSES.map((s) => (
@@ -120,15 +160,16 @@ export function OrderDetailsPage() {
             <button
               type="button"
               onClick={() => applyStatus(pendingStatus)}
-              className="rounded bg-burgundy px-5 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+              disabled={applying}
+              className="rounded bg-burgundy px-5 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
             >
-              تطبيق
+              {applying ? 'جارٍ التطبيق…' : 'تطبيق'}
             </button>
           )}
         </div>
         {statusError && (
           <p role="alert" className="mt-3 text-xs font-medium text-burgundy">
-            تعذّر تحديث حالة الطلب — تحقق من الاتصال وحاول مرة أخرى.
+            {statusError}
           </p>
         )}
         {confirmCancel && (
@@ -141,9 +182,10 @@ export function OrderDetailsPage() {
               <button
                 type="button"
                 onClick={() => applyStatus('cancelled')}
-                className="rounded bg-burgundy px-4 py-1.5 text-xs font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+                disabled={applying}
+                className="rounded bg-burgundy px-4 py-1.5 text-xs font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
               >
-                تأكيد الإلغاء
+                {applying ? 'جارٍ الإلغاء…' : 'تأكيد الإلغاء'}
               </button>
               <button
                 type="button"

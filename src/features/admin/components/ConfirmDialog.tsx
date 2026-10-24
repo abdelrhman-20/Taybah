@@ -11,6 +11,7 @@ export function ConfirmDialog({
   cancelLabel = 'إلغاء',
   danger = true,
   confirmDisabled = false,
+  error,
   onConfirm,
   onCancel,
 }: {
@@ -21,6 +22,9 @@ export function ConfirmDialog({
   cancelLabel?: string;
   danger?: boolean;
   confirmDisabled?: boolean;
+  // Shown inside the dialog when the confirmed action failed, so the dialog
+  // stays open and the user can retry or cancel.
+  error?: string | null;
   onConfirm?: () => void;
   onCancel: () => void;
 }) {
@@ -63,6 +67,11 @@ export function ConfirmDialog({
           <div>
             <h3 className="font-display text-lg text-espresso">{title}</h3>
             <p className="mt-1.5 text-sm leading-6 text-espresso/65">{body}</p>
+            {error && (
+              <p role="alert" className="mt-3 text-sm font-medium text-burgundy">
+                {error}
+              </p>
+            )}
           </div>
         </div>
         <div className="mt-6 flex justify-end gap-2">

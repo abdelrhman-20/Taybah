@@ -1,56 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { flattenForFooter, isSafeNavUrl } from './navStore';
+import { describe, expect, it } from 'vitest';
+import { defaultNav, flattenForFooter, isSafeNavUrl, migrateNav } from './navStore';
 import type { StorefrontNavItem } from './navStore';
+import { freshBackend, type Backend } from '../../../test/harness';
 
-// Dedicated coverage for the storefront navigation store: persistence,
-// hierarchy (exactly one child level on main, flat footer), URL safety
-// validation, and sanitization of invalid/malformed stored data.
-//
-// navStore.ts has no plain getNavigation() getter (only the useNavigation()
-// hook, which needs React) — so to observe the sanitized in-memory state
-// after a module loads from seeded storage, these tests call a mutator on
-// the GROUP NOT under test (e.g. saveNavGroup('footer', [])) to force a
-// persist(), which re-serializes BOTH groups from the already-migrated
-// in-memory state. That's `flush()` below.
+// Navigation store: URL safety, sanitization of malformed data (pure
+// migrateNav), hierarchy rules, and persistence through the FAKE backend
+// (client.mock.ts) — saves resolve only after the server confirmed, failures
+// leave the displayed menu untouched.
 
-const STORAGE_KEY = 'taybah:navigation';
-
-function memoryStorage(): Storage {
-  const m = new Map<string, string>();
-  return {
-    getItem: (k: string) => (m.has(k) ? m.get(k)! : null),
-    setItem: (k: string, v: string) => void m.set(k, String(v)),
-    removeItem: (k: string) => void m.delete(k),
-    clear: () => m.clear(),
-    key: (i: number) => [...m.keys()][i] ?? null,
-    get length() {
-      return m.size;
-    },
-  };
+async function loadNav(b: Backend, seed?: { main?: unknown[]; footer?: unknown[] }) {
+  b.setInitialized(true);
+  if (seed?.main) b.putDoc('nav', 'main', { items: seed.main });
+  if (seed?.footer) b.putDoc('nav', 'footer', { items: seed.footer });
+  const docs = await import('../catalog/catalogDocs');
+  const nav = await import('./navStore');
+  await docs.whenDocsSettled();
+  return { nav, docs };
 }
-
-let storage: Storage;
-
-async function freshNavStore() {
-  vi.resetModules();
-  vi.stubGlobal('localStorage', storage);
-  return import('./navStore');
-}
-
-// Forces a persist() without changing either group's content: removeNavItem
-// reads the CURRENT in-memory nav[group] (already fully migrated on module
-// load), filters out a non-existent id (a no-op), and persists {...nav}
-// as-is — which is exactly what we need to read the migrated state back
-// out of storage without a getter.
-function flush(nav: Awaited<ReturnType<typeof freshNavStore>>, probedGroup: 'main' | 'footer') {
-  const other = probedGroup === 'main' ? 'footer' : 'main';
-  nav.removeNavItem(other, '__flush_probe_nonexistent__');
-  return JSON.parse(storage.getItem(STORAGE_KEY)!);
-}
-
-beforeEach(() => {
-  storage = memoryStorage();
-});
 
 const leaf = (id: string, over: Partial<StorefrontNavItem> = {}): StorefrontNavItem => ({
   id,
@@ -89,44 +55,78 @@ describe('isSafeNavUrl', () => {
 });
 
 describe('navStore — defaults and persistence', () => {
-  it('seeds a non-empty main menu and footer', async () => {
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'main');
-    expect(stored.main.length).toBeGreaterThan(0);
-    expect(stored.footer.length).toBeGreaterThan(0);
+  it('serves the built-in menus until the catalog is migrated', async () => {
+    await freshBackend('admin'); // cutover flag NOT set
+    const docs = await import('../catalog/catalogDocs');
+    const nav = await import('./navStore');
+    await docs.whenDocsSettled();
+    expect(nav.getNavigation()).toEqual(defaultNav());
   });
 
-  it('persists upsertNavItem and survives a fresh module reload', async () => {
-    const nav1 = await freshNavStore();
-    nav1.upsertNavItem('main', leaf('new-item', { label: 'جديد' }));
-    const stored = JSON.parse(storage.getItem(STORAGE_KEY)!);
-    expect(stored.main.some((i: StorefrontNavItem) => i.id === 'new-item')).toBe(true);
+  it('reads the stored menus once initialized', async () => {
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, { main: [leaf('only-this')], footer: [leaf('f1')] });
+    expect(nav.getNavigation().main.map((i) => i.id)).toEqual(['only-this']);
+    expect(nav.getNavigation().footer.map((i) => i.id)).toEqual(['f1']);
+  });
+
+  it('upsertNavItem persists to the database and only then updates the menu', async () => {
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, { main: [leaf('a')], footer: [] });
+    await nav.upsertNavItem('main', leaf('new-item', { label: 'جديد' }));
+    const stored = b.tables.catalog_docs.find((d) => d.kind === 'nav' && d.id === 'main')!;
+    expect((stored.data as { items: StorefrontNavItem[] }).items.map((i) => i.id)).toEqual(['a', 'new-item']);
+    expect(nav.getNavigation().main.map((i) => i.id)).toEqual(['a', 'new-item']);
+    expect(stored.revision).toBe(2);
   });
 
   it('upsertNavItem replaces an existing item with the same id instead of duplicating it', async () => {
-    const nav = await freshNavStore();
-    nav.upsertNavItem('footer', leaf('contact', { label: 'الأصلي' }));
-    nav.upsertNavItem('footer', leaf('contact', { label: 'محدث' }));
-    const stored = JSON.parse(storage.getItem(STORAGE_KEY)!);
-    const contacts = stored.footer.filter((i: StorefrontNavItem) => i.id === 'contact');
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, { main: [], footer: [leaf('contact', { label: 'الأصلي' })] });
+    await nav.upsertNavItem('footer', leaf('contact', { label: 'محدث' }));
+    const contacts = nav.getNavigation().footer.filter((i) => i.id === 'contact');
     expect(contacts).toHaveLength(1);
     expect(contacts[0].label).toBe('محدث');
   });
 
   it('removeNavItem drops exactly the targeted item', async () => {
-    const nav = await freshNavStore();
-    nav.upsertNavItem('main', leaf('temp'));
-    nav.removeNavItem('main', 'temp');
-    const stored = JSON.parse(storage.getItem(STORAGE_KEY)!);
-    expect(stored.main.some((i: StorefrontNavItem) => i.id === 'temp')).toBe(false);
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, { main: [leaf('keep'), leaf('temp')], footer: [] });
+    await nav.removeNavItem('main', 'temp');
+    expect(nav.getNavigation().main.map((i) => i.id)).toEqual(['keep']);
   });
 
-  it('resetNavigation restores the seeded defaults', async () => {
-    const nav = await freshNavStore();
-    nav.saveNavGroup('main', []);
-    nav.resetNavigation();
-    const stored = JSON.parse(storage.getItem(STORAGE_KEY)!);
-    expect(stored.main.length).toBeGreaterThan(0);
+  it('resetNavigation restores both seeded menus in one atomic write', async () => {
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, { main: [], footer: [] });
+    await nav.resetNavigation();
+    expect(nav.getNavigation().main.length).toBeGreaterThan(0);
+    expect(nav.getNavigation().footer.length).toBeGreaterThan(0);
+    expect(b.calls('rpc:catalog_write')).toBe(1);
+  });
+
+  it('a failed save rejects and leaves the displayed menu unchanged', async () => {
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, { main: [leaf('a')], footer: [] });
+    b.failNext('rpc:catalog_write', { code: '42501', message: 'permission denied' });
+    await expect(nav.upsertNavItem('main', leaf('b'))).rejects.toMatchObject({ code: 'unauthorized' });
+    expect(nav.getNavigation().main.map((i) => i.id)).toEqual(['a']);
+  });
+
+  it('a non-admin cannot change the menu', async () => {
+    const b = await freshBackend('user');
+    const { nav } = await loadNav(b, { main: [leaf('a')], footer: [] });
+    await expect(nav.saveNavGroup('main', [])).rejects.toMatchObject({ code: 'unauthorized' });
+    expect(nav.getNavigation().main).toHaveLength(1);
+  });
+
+  it('refuses edits before the catalog is migrated', async () => {
+    const b = await freshBackend('admin');
+    const nav = await import('./navStore');
+    const docs = await import('../catalog/catalogDocs');
+    await docs.whenDocsSettled();
+    await expect(nav.saveNavGroup('main', [])).rejects.toMatchObject({ code: 'not_initialized' });
+    expect(b.calls('rpc:catalog_write')).toBe(0);
   });
 });
 
@@ -160,7 +160,7 @@ describe('flattenForFooter (Phase 2 fix: dropdown-trigger parents were dead foot
     expect(flattenForFooter([parent])).toEqual([leaf('handknotted')]);
   });
 
-  it('preserves top-level order while inlining each parent\'s children in place', () => {
+  it("preserves top-level order while inlining each parent's children in place", () => {
     const a = leaf('shop');
     const b = { ...leaf('rugs', { path: '' }), children: [leaf('flatweave')] };
     const c = leaf('collections');
@@ -170,112 +170,100 @@ describe('flattenForFooter (Phase 2 fix: dropdown-trigger parents were dead foot
 
 describe('navStore — hierarchy (main has one child level, footer stays flat)', () => {
   it('keeps a child level on a main-menu item', async () => {
-    const nav = await freshNavStore();
-    nav.saveNavGroup('main', [leaf('rugs', { children: [leaf('flatweave'), leaf('handknotted')] })]);
-    const stored = JSON.parse(storage.getItem(STORAGE_KEY)!);
-    expect(stored.main[0].children).toHaveLength(2);
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, { main: [], footer: [] });
+    await nav.saveNavGroup('main', [leaf('rugs', { children: [leaf('flatweave'), leaf('handknotted')] })]);
+    expect(nav.getNavigation().main[0].children).toHaveLength(2);
   });
 
-  it('drops a grandchild level via sanitizeItems — only one level of nesting is ever kept', async () => {
-    const nav = await freshNavStore();
-    storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        main: [
-          { ...leaf('rugs'), children: [{ ...leaf('flatweave'), children: [leaf('too-deep')] }] },
-        ],
-        footer: [],
-      }),
-    );
-    const nav2 = await freshNavStore();
-    void nav;
-    const stored = flush(nav2, 'main');
-    expect(stored.main[0].children).toHaveLength(1);
-    expect(stored.main[0].children[0].children).toBeUndefined();
+  it('drops a grandchild level — only one level of nesting is ever kept', () => {
+    const out = migrateNav({
+      main: [{ ...leaf('rugs'), children: [{ ...leaf('flatweave'), children: [leaf('too-deep')] }] }],
+      footer: [],
+    });
+    expect(out.main[0].children).toHaveLength(1);
+    expect(out.main[0].children![0].children).toBeUndefined();
   });
 
-  it('strips any children sanitizeItems finds on a footer item — footer is always flat', async () => {
-    storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ main: [leaf('shop')], footer: [{ ...leaf('contact'), children: [leaf('sneaky')] }] }),
-    );
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'footer');
-    expect(stored.footer[0].children).toBeUndefined();
+  it('strips any children found on a footer item — footer is always flat', () => {
+    const out = migrateNav({
+      main: [leaf('shop')],
+      footer: [{ ...leaf('contact'), children: [leaf('sneaky')] }],
+    });
+    expect(out.footer[0].children).toBeUndefined();
   });
 });
 
-describe('navStore — sanitization of invalid/malformed stored data', () => {
-  it('falls back to defaults when the stored value is malformed JSON', async () => {
-    storage.setItem(STORAGE_KEY, '{not json');
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'main');
-    expect(stored.main.length).toBeGreaterThan(0);
+describe('migrateNav — sanitization of invalid/malformed data', () => {
+  it('falls back to defaults when the value is not an object', () => {
+    expect(migrateNav(null)).toEqual(defaultNav());
+    expect(migrateNav('x' as never)).toEqual(defaultNav());
   });
 
-  it('drops a duplicate id, keeping only the first occurrence', async () => {
-    storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ main: [leaf('shop', { label: 'أول' }), leaf('shop', { label: 'ثانٍ' })], footer: [] }),
-    );
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'main');
-    const shops = stored.main.filter((i: StorefrontNavItem) => i.id === 'shop');
+  it('drops a duplicate id, keeping only the first occurrence', () => {
+    const out = migrateNav({
+      main: [leaf('shop', { label: 'أول' }), leaf('shop', { label: 'ثانٍ' })],
+      footer: [],
+    });
+    const shops = out.main.filter((i) => i.id === 'shop');
     expect(shops).toHaveLength(1);
     expect(shops[0].label).toBe('أول');
   });
 
-  it('drops a leaf item with no destination and no children', async () => {
-    storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ main: [{ id: 'empty', label: 'فاضي', kind: 'internal', path: '', visible: true }], footer: [] }),
-    );
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'main');
-    expect(stored.main).toEqual([]);
+  it('drops a leaf item with no destination and no children', () => {
+    const out = migrateNav({
+      main: [{ id: 'empty', label: 'فاضي', kind: 'internal', path: '', visible: true }],
+      footer: [],
+    });
+    expect(out.main).toEqual([]);
   });
 
-  it('downgrades a parent with an unsafe destination to a pure trigger, keeping its valid children', async () => {
-    storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        main: [
-          { id: 'rugs', label: 'سجاد', kind: 'internal', path: 'javascript:evil()', visible: true, children: [leaf('flatweave')] },
-        ],
-        footer: [],
-      }),
-    );
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'main');
-    expect(stored.main[0].path).toBe('');
-    expect(stored.main[0].children).toHaveLength(1);
+  it('downgrades a parent with an unsafe destination to a pure trigger, keeping its valid children', () => {
+    const out = migrateNav({
+      main: [
+        {
+          id: 'rugs',
+          label: 'سجاد',
+          kind: 'internal',
+          path: 'javascript:evil()',
+          visible: true,
+          children: [leaf('flatweave')],
+        },
+      ],
+      footer: [],
+    });
+    expect(out.main[0].path).toBe('');
+    expect(out.main[0].children).toHaveLength(1);
   });
 
-  it('drops an item with an unsafe destination and no children entirely', async () => {
-    storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ main: [{ id: 'bad', label: 'سيء', kind: 'external', path: 'javascript:evil()', visible: true }], footer: [] }),
-    );
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'main');
-    expect(stored.main).toEqual([]);
+  it('drops an item with an unsafe destination and no children entirely', () => {
+    const out = migrateNav({
+      main: [{ id: 'bad', label: 'سيء', kind: 'external', path: 'javascript:evil()', visible: true }],
+      footer: [],
+    });
+    expect(out.main).toEqual([]);
   });
 
-  it('treats a non-boolean/missing visible flag as visible (tolerant default)', async () => {
-    storage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ main: [{ id: 'shop', label: 'تسوق', kind: 'internal', path: '/products' }], footer: [] }),
-    );
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'main');
-    expect(stored.main[0].visible).toBe(true);
+  it('treats a missing visible flag as visible (tolerant default)', () => {
+    const out = migrateNav({
+      main: [{ id: 'shop', label: 'تسوق', kind: 'internal', path: '/products' } as StorefrontNavItem],
+      footer: [],
+    });
+    expect(out.main[0].visible).toBe(true);
   });
 
-  it("seeds a missing group from defaults while keeping the other group's stored value as-is", async () => {
-    storage.setItem(STORAGE_KEY, JSON.stringify({ main: [leaf('only-this')] }));
-    const nav = await freshNavStore();
-    const stored = flush(nav, 'footer');
-    expect(stored.main).toEqual([leaf('only-this')]);
-    expect(stored.footer.length).toBeGreaterThan(0); // seeded from defaultNav()
+  it("seeds a missing group from defaults while keeping the other group's value as-is", () => {
+    const out = migrateNav({ main: [leaf('only-this')] });
+    expect(out.main).toEqual([leaf('only-this')]);
+    expect(out.footer.length).toBeGreaterThan(0);
+  });
+
+  it('a stored menu with unsafe items is sanitized when read from the database', async () => {
+    const b = await freshBackend('admin');
+    const { nav } = await loadNav(b, {
+      main: [leaf('ok'), { id: 'bad', label: 'x', kind: 'external', path: 'javascript:evil()', visible: true }],
+      footer: [],
+    });
+    expect(nav.getNavigation().main.map((i) => i.id)).toEqual(['ok']);
   });
 });

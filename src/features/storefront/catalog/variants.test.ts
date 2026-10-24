@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AttributeDef } from './attributeStore';
+import { migrateAttributes, type AttributeDef } from './attributeStore';
+import { freshBackend, type Backend } from '../../../test/harness';
 import {
   catalogCategories,
   catalogCollections,
@@ -652,7 +653,8 @@ describe('sanitizeVariantFields', () => {
   });
 });
 
-// ---- store-level integration (localStorage-backed modules) -------------------------
+// ---- store-level integration (cart in localStorage; catalog and attributes
+// from the FAKE backend, see client.mock.ts) -------------------------
 
 function memoryStorage(): Storage {
   const m = new Map<string, string>();
@@ -669,15 +671,33 @@ function memoryStorage(): Storage {
 }
 
 let storage: Storage;
+// Optional database seeding applied by every freshModule() call (each call
+// is a fresh module graph with a freshly reset backend).
+let dbSeed: ((b: Backend) => void) | null = null;
 
 async function freshModule<T>(path: string): Promise<T> {
-  vi.resetModules();
+  const b = await freshBackend('admin'); // resets modules + backend
   vi.stubGlobal('localStorage', storage);
-  return (await import(path)) as T;
+  if (dbSeed) dbSeed(b);
+  const mod = (await import(path)) as T;
+  const docs = await import('./catalogDocs');
+  await docs.whenDocsSettled();
+  return mod;
 }
+
+// Seeds an INITIALIZED catalog holding exactly these products.
+const seedProducts = (products: unknown[]) => {
+  dbSeed = (b) => {
+    b.setInitialized(true);
+    (products as { id: string; slug: string; published?: boolean }[]).forEach((pr, i) =>
+      b.putDoc('product', pr.id, pr, { slug: pr.slug, visible: pr.published !== false, sort_order: i }),
+    );
+  };
+};
 
 beforeEach(() => {
   storage = memoryStorage();
+  dbSeed = null;
 });
 
 describe('catalog store migration', () => {
@@ -739,52 +759,46 @@ describe('catalog store migration', () => {
     expect(new Set((p.variants ?? []).map((v) => v.sku)).size).toBe(3);
   });
 
-  it('a saved size attribute gains missing seeded values without losing its own edits', async () => {
-    storage.setItem(
-      'taybah:attributes',
-      JSON.stringify([
+  it('legacy size data gains missing seeded values (import only) without losing its own edits', () => {
+    const migrated = migrateAttributes(
+      [
         { key: 'size', name: { ar: 'المقاس', en: 'Size' }, display: 'chips', categories: [], required: false, variationCapable: true, filterable: false, enabled: true, order: 1,
           values: [{ key: 'small', label: { ar: 'صغير جدًا (معدّل)', en: '' }, enabled: false, order: 1 }] },
-      ]),
+      ],
+      { backfillDefaults: true },
     );
-    const attrStore = await freshModule<typeof import('./attributeStore')>('./attributeStore.ts');
-    const size = attrStore.getAttributes().find((a) => a.key === 'size')!;
+    const size = migrated.find((a) => a.key === 'size')!;
     const small = size.values.find((v) => v.key === 'small')!;
     expect(small.label.ar).toBe('صغير جدًا (معدّل)');
     expect(small.enabled).toBe(false);
     expect(size.values.some((v) => v.key === 'rug-160x230')).toBe(true);
   });
 
-  it('survives a localStorage reload with variant data intact', async () => {
+  it('survives a database round-trip with variant data intact', async () => {
     const v = variant({ id: 'v-fixed', sku: 'TYB-V-9', image: 'local:img9' });
     const p = baseProduct({ variantAxes: ['color', 'size'], variants: [v] });
-    storage.setItem(
-      'taybah:catalog',
-      JSON.stringify({ products: [p], categories: [], collections: [] }),
-    );
+    seedProducts([p]);
 
     const store = await freshModule<typeof import('./catalogStore')>('./catalogStore.ts');
     const loaded = store.getCatalog().products[0];
     expect(loaded.variantAxes).toEqual(['color', 'size']);
     expect(loaded.variants).toEqual([v]);
 
-    // Persisting then re-reading preserves the variant record byte-for-byte.
-    store.upsertProduct(loaded);
-    const raw = JSON.parse(storage.getItem('taybah:catalog')!);
-    expect(raw.products[0].variants).toEqual([v]);
-
-    const store2 = await freshModule<typeof import('./catalogStore')>('./catalogStore.ts');
-    expect(store2.getCatalog().products[0].variants).toEqual([v]);
+    // Persisting then re-reading preserves the variant record exactly.
+    await store.upsertProduct(loaded);
+    const backend = (
+      (await import('../../../lib/supabase/client')) as unknown as { backend: Backend }
+    ).backend;
+    const raw = backend.tables.catalog_docs.find((d) => d.kind === 'product')!;
+    expect((raw.data as { variants: unknown }).variants).toEqual([v]);
+    expect(store.getCatalog().products[0].variants).toEqual([v]);
   });
 
   it('does not create variants for legacy products and keeps their fields', async () => {
     const legacy = baseProduct({ id: 'legacy-1' });
     delete legacy.variantAxes;
     delete legacy.variants;
-    storage.setItem(
-      'taybah:catalog',
-      JSON.stringify({ products: [legacy], categories: [], collections: [] }),
-    );
+    seedProducts([legacy]);
     const store = await freshModule<typeof import('./catalogStore')>('./catalogStore.ts');
     const loaded = store.getCatalog().products[0];
     expect(loaded.id).toBe('legacy-1');
@@ -799,10 +813,7 @@ describe('catalog store migration', () => {
       variants: [undefined, { id: 'w1', sku: 'W-1', combo: { color: 'ivory' } }] as unknown as
         ProductVariant[],
     });
-    storage.setItem(
-      'taybah:catalog',
-      JSON.stringify({ products: [p], categories: [], collections: [] }),
-    );
+    seedProducts([p]);
     const store = await freshModule<typeof import('./catalogStore')>('./catalogStore.ts');
     const loaded = store.getCatalog().products[0];
     expect(loaded.variants).toHaveLength(1);
@@ -1326,16 +1337,13 @@ describe('media reference scan', () => {
       variantAxes: ['color'],
       variants: [variant({ image: 'local:asset-9' })],
     });
-    storage.setItem(
-      'taybah:catalog',
-      JSON.stringify({ products: [p], categories: [], collections: [] }),
-    );
+    seedProducts([p]);
     const refs = await freshModule<typeof import('../../shared/assets/assetRefs')>(
       '../../shared/assets/assetRefs.ts',
     );
-    const hits = refs.imageReferences('asset-9');
+    const hits = refs.imageReferences('local:asset-9');
     expect(hits.some((h) => h.includes('تنويعة منتج'))).toBe(true);
-    expect(refs.imageReferences('nothing')).toEqual([]);
+    expect(refs.imageReferences('local:nothing')).toEqual([]);
   });
 });
 
@@ -1957,14 +1965,16 @@ describe('cart/order safety when an attribute or value is disabled after purchas
     expect(comboValuesEnabled({}, ATTRS_ALL_ENABLED)).toBe(true); // nothing selected, nothing to block
   });
 
-  // Seeds the shared localStorage-backed attribute store (read internally by
+  // Seeds the database-backed attribute store (read internally by
   // resolveCartLines) with a color attribute whose 'burgundy' value is
   // disabled — everything else (size, material) falls back to the normal
   // enabled defaults via attributeStore's own migration.
-  const seedDisabledBurgundy = () =>
-    storage.setItem(
-      'taybah:attributes',
-      JSON.stringify([
+  const seedDisabledBurgundy = () => {
+    dbSeed = (b) => {
+      b.setInitialized(true);
+      b.putDoc(
+        'attribute',
+        'color',
         {
           key: 'color',
           name: { ar: 'اللون', en: 'Color' },
@@ -1980,8 +1990,10 @@ describe('cart/order safety when an attribute or value is disabled after purchas
             { key: 'ivory', label: { ar: 'عاجي', en: 'Ivory' }, enabled: true, order: 2 },
           ],
         },
-      ]),
-    );
+        { sort_order: 1 },
+      );
+    };
+  };
 
   it('blocks a variant cart line once its combo touches a disabled attribute value', async () => {
     seedDisabledBurgundy();
@@ -2040,7 +2052,7 @@ describe('cart/order safety when an attribute or value is disabled after purchas
     // Disabling a value is purely an attribute-store flag — the product's
     // own stored assignment is untouched (no delete/rewrite anywhere here),
     // even though 'burgundy' is now disabled in the attribute store above.
-    store.upsertProduct(p);
+    await store.upsertProduct(p);
     const stored = store.getCatalog().products.find((x) => x.id === 'p-disabled-check');
     expect(stored?.colors).toEqual(['burgundy', 'ivory']);
   });

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { supabase } from '../../../lib/supabase/client';
+import { supabase, supabaseConfigured } from '../../../lib/supabase/client';
+import { PersistenceError, classifyError, withTimeout } from '../../../lib/persistence/errors';
 import type { Localized } from '../catalog/catalogData';
 import { attributeByKey } from '../catalog/attributeStore';
 import type { ResolvedCartLine } from '../catalog/catalogStore';
@@ -126,32 +127,73 @@ function fromRow(row: OrderRow): GuestOrder {
 let orders: GuestOrder[] = [];
 const listeners = new Set<() => void>();
 
+// 'idle' = nobody is signed in, so there is nothing to load (the order list
+// is staff-only). A failed load is 'error' — never shown as an empty list.
+export type OrdersLoadState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ready' }
+  | { status: 'error'; code: string };
+
+let loadState: OrdersLoadState = { status: 'idle' };
+
 function notify() {
   listeners.forEach((l) => l());
 }
 
-async function fetchAll() {
-  const { data, error } = await supabase
-    .from('orders')
-    .select('id, ref, created_at, status, contact, address, delivery, lines, subtotal, total')
-    .order('created_at', { ascending: false });
-  if (error) {
-    // Most likely cause for an anonymous admin session: not signed in yet,
-    // so RLS's "staff can read orders" (authenticated-only) policy hides
-    // every row rather than erroring loudly — surfaced as an empty list.
-    console.error('Failed to load orders:', error.message);
-    orders = [];
-  } else {
-    orders = (data ?? []).map(fromRow);
-  }
+function setLoadState(next: OrdersLoadState) {
+  loadState = next;
   notify();
 }
 
-// Kicks off the initial load immediately (module init) and whenever the
-// auth session changes (signing in as staff reveals previously-hidden rows).
-if (typeof window !== 'undefined') {
-  fetchAll();
-  supabase.auth.onAuthStateChange(() => fetchAll());
+export function getOrdersLoadState(): OrdersLoadState {
+  return loadState;
+}
+
+let loadPromise: Promise<void> | null = null;
+
+async function fetchAll(): Promise<void> {
+  if (!supabaseConfigured) return;
+  const { data: sessionData } = await supabase.auth.getSession();
+  if (!sessionData.session) {
+    // Signed out: drop any previously loaded staff data.
+    orders = [];
+    setLoadState({ status: 'idle' });
+    return;
+  }
+  setLoadState({ status: 'loading' });
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('orders')
+        .select('id, ref, created_at, status, contact, address, delivery, lines, subtotal, total')
+        .order('created_at', { ascending: false }),
+    );
+    if (error) throw classifyError(error);
+    orders = (data ?? []).map(fromRow);
+    setLoadState({ status: 'ready' });
+  } catch (e) {
+    const err = classifyError(e);
+    console.error('Failed to load orders:', err.code, err.detail);
+    // Keep whatever was loaded before; the UI shows the error + retry.
+    setLoadState({ status: 'error', code: err.code });
+  }
+}
+
+export function reloadOrders(): Promise<void> {
+  loadPromise ??= fetchAll().finally(() => {
+    loadPromise = null;
+  });
+  return loadPromise;
+}
+
+// Kicks off the load at module init and whenever the auth session changes
+// (signing in as staff reveals previously-hidden rows).
+if (typeof window !== 'undefined' && supabaseConfigured) {
+  void reloadOrders();
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') void reloadOrders();
+  });
 }
 
 export async function saveOrder(order: GuestOrder) {
@@ -173,10 +215,45 @@ export async function saveOrder(order: GuestOrder) {
   notify();
 }
 
-export async function updateOrderStatus(orderId: string, status: OrderStatus) {
-  const { error } = await supabase.from('orders').update({ status }).eq('id', orderId);
-  if (error) throw error;
-  orders = orders.map((o) => (o.id === orderId ? { ...o, status } : o));
+// Changes an order's status and returns only once the database confirmed it.
+//  • `expectedStatus` (the status the admin was looking at) makes the update
+//    conditional, so a stale screen cannot overwrite a newer change.
+//  • An update that matches no row is NEVER reported as success: it is
+//    classified as unauthorized (RLS hid the row), conflict (status changed
+//    elsewhere) or not_found. If the row already holds the requested status
+//    (e.g. a double click) that end state is returned as success.
+export async function updateOrderStatus(
+  orderId: string,
+  status: OrderStatus,
+  expectedStatus?: OrderStatus,
+): Promise<void> {
+  if (!supabaseConfigured) throw new PersistenceError('unconfigured');
+  let query = supabase.from('orders').update({ status }).eq('id', orderId);
+  if (expectedStatus) query = query.eq('status', expectedStatus);
+  const { data, error } = await withTimeout(query.select('id, status'));
+  if (error) throw classifyError(error);
+
+  const updated = (data ?? [])[0] as { id: string; status: OrderStatus } | undefined;
+  if (!updated) {
+    // Zero rows: find out why.
+    const { data: adminOk } = await supabase.rpc('is_admin');
+    if (adminOk !== true) throw new PersistenceError('unauthorized', 'not an admin');
+    const { data: row, error: readError } = await supabase
+      .from('orders')
+      .select('id, status')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (readError) throw classifyError(readError);
+    if (!row) throw new PersistenceError('not_found', 'order');
+    if ((row as { status: OrderStatus }).status !== status) {
+      throw new PersistenceError('conflict', 'order status changed elsewhere');
+    }
+    orders = orders.map((o) => (o.id === orderId ? { ...o, status } : o));
+    notify();
+    return;
+  }
+  if (updated.status !== status) throw new PersistenceError('verify_failed', 'status mismatch');
+  orders = orders.map((o) => (o.id === orderId ? { ...o, status: updated.status } : o));
   notify();
 }
 
@@ -240,6 +317,10 @@ function subscribe(listener: () => void) {
 
 export function useOrders(): GuestOrder[] {
   return useSyncExternalStore(subscribe, () => orders);
+}
+
+export function useOrdersLoadState(): OrdersLoadState {
+  return useSyncExternalStore(subscribe, () => loadState);
 }
 
 export function useOrder(orderId: string | undefined): GuestOrder | undefined {

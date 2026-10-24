@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { describePersistenceError } from '../../../lib/persistence/errors';
 import { Link } from 'react-router';
 import { ArrowDown, ArrowUp, Pencil, RotateCcw } from 'lucide-react';
 import {
@@ -21,10 +22,13 @@ export function AdminHomepagePage() {
   // confirmed it; 'error' with the real failure otherwise — never a fake
   // success.
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveMessage, setSaveMessage] = useState('');
   const sync = getHomeSyncState();
 
   const save = (op: () => Promise<void>) => {
+    if (saveState === 'saving') return; // duplicate clicks while a save is in flight
     setSaveState('saving');
+    setSaveMessage('');
     void op()
       .then(() => {
         setSaveState('saved');
@@ -32,6 +36,7 @@ export function AdminHomepagePage() {
       })
       .catch((e: unknown) => {
         console.error('Homepage settings save failed:', e instanceof Error ? e.message : e);
+        setSaveMessage(describePersistenceError(e));
         setSaveState('error');
       });
   };
@@ -70,21 +75,21 @@ export function AdminHomepagePage() {
     if (target < 0 || target >= home.sections.length) return;
     const next = [...home.sections];
     [next[index], next[target]] = [next[target], next[index]];
-    save(() => setHomeSections(next));
+    save(() => setHomeSections(next, { base: home.sections }));
   };
 
   const toggle = (index: number) => {
     const next = home.sections.map((s, i) =>
       i === index ? { ...s, visible: !s.visible } : s,
     );
-    save(() => setHomeSections(next));
+    save(() => setHomeSections(next, { base: home.sections }));
   };
 
   return (
     <div className="mx-auto max-w-4xl">
       <AdminPageHeader
         title="الصفحة الرئيسية"
-        description="إدارة أقسام الصفحة الرئيسية — الظهور والترتيب والمحتوى. التعديلات تظهر في المتجر فورًا."
+        description="إدارة أقسام الصفحة الرئيسية — الظهور والترتيب والمحتوى. تُحفظ على الخادم وتظهر في المتجر بعد تأكيد الحفظ."
       />
 
       <div className="flex items-center justify-between gap-4">
@@ -101,12 +106,9 @@ export function AdminHomepagePage() {
         >
           {saveState === 'saving' && 'جارٍ الحفظ على الخادم…'}
           {saveState === 'saved' && 'تم الحفظ على الخادم'}
-          {saveState === 'error' &&
-            (sync.status === 'unconfigured'
-              ? 'تعذر الحفظ على الخادم — خدمة التخزين غير مهيأة. التغيير يبقى في هذا المتصفح فقط.'
-              : 'تعذر الحفظ على الخادم — التغيير يبقى في هذا المتصفح فقط.')}
-          {saveState === 'idle' && sync.status === 'error' && 'تعذر مزامنة الإعدادات مع الخادم — تُعرض النسخة المحلية.'}
-          {saveState === 'idle' && sync.status === 'unconfigured' && 'التخزين السحابي غير مهيأ — تحفظ التعديلات في هذا المتصفح فقط.'}
+          {saveState === 'error' && saveMessage}
+          {saveState === 'idle' && sync.status === 'error' && 'تعذّرت مزامنة آخر نسخة من الخادم — قد تكون القيم المعروضة قديمة.'}
+          {saveState === 'idle' && sync.status === 'unconfigured' && 'التخزين غير مهيأ في هذا الإصدار — لن يُحفظ أي تعديل.'}
         </p>
         <button
           type="button"

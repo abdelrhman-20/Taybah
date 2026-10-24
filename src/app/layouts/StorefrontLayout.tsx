@@ -16,6 +16,7 @@ import { PageTransitionProvider } from '../../features/storefront/layout/PageTra
 import { ErrorBoundary } from '../../features/shared/components/ErrorBoundary';
 import { Reveal } from '../../features/shared/components/Reveal';
 import { ScrollToTop } from '../../features/shared/components/ScrollToTop';
+import { DataGate } from '../../features/shared/components/DataGate';
 
 const skipLabel = { ar: 'تخطَّ إلى المحتوى', en: 'Skip to content' };
 
@@ -42,6 +43,7 @@ export function StorefrontLayout() {
 
   return (
     <PageTransitionProvider>
+      <DataGate bilingual>
       <div className="flex min-h-screen flex-col pb-[calc(3.5rem+env(safe-area-inset-bottom))] lg:pb-0">
         <ScrollToTop />
         <a
@@ -70,6 +72,7 @@ export function StorefrontLayout() {
         <BottomNav />
         <BackToTopButton />
       </div>
+      </DataGate>
     </PageTransitionProvider>
   );
 }

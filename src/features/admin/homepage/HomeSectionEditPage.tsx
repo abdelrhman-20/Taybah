@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { describePersistenceError } from '../../../lib/persistence/errors';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowDown, ArrowRight, ArrowUp, Plus } from 'lucide-react';
 import {
@@ -347,6 +348,11 @@ export function HomeSectionEditPage() {
   const [draft, setDraft] = useState<HomeContent[HomeSectionKey] | null>(() =>
     key ? structuredClone(home[key]) : null,
   );
+  // The section value the editor opened on: a save is refused (conflict) if
+  // the server holds something different by then, instead of overwriting it.
+  const [base] = useState<HomeContent[HomeSectionKey] | null>(() =>
+    key ? structuredClone(home[key]) : null,
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -467,16 +473,15 @@ export function HomeSectionEditPage() {
       if (bad) setHeroSel(bad.split('.')[0]);
       return;
     }
+    if (saving) return;
     setSaveError(null);
     setSaving(true);
-    updateHomeSection(key, draft as never)
+    updateHomeSection(key, draft as never, { base: base as never })
       .then(() => navigate('/admin/homepage'))
       .catch((e: unknown) => {
         console.error('Section save failed:', e instanceof Error ? e.message : e);
         setSaving(false);
-        setSaveError(
-          'تعذر الحفظ على الخادم — تحقق من الاتصال وصلاحيات الحساب ثم حاول مجددًا.',
-        );
+        setSaveError(describePersistenceError(e));
       });
   };
 

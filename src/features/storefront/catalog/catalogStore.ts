@@ -17,17 +17,29 @@ import {
   variantPurchasable,
 } from './variants';
 import { getAttributes } from './attributeStore';
+import {
+  docsOfKind,
+  getDoc,
+  getDocsState,
+  subscribeDocs,
+  writeDocs,
+  type DocPut,
+} from './catalogDocs';
 import { getCartLines, type CartLine } from '../cart/useCart';
 import { getWishlistIds } from '../wishlist/useWishlist';
 import { getHomeContent } from '../home/homeStore';
 import { getOrders } from '../checkout/orderStore';
 
-// SHARED CATALOG STORE — one source of truth for storefront + admin in the
-// frontend demo. Seeds from catalogData mocks, persists to localStorage so
-// admin edits survive refresh, and syncs across tabs via the storage event.
-// Replaced by Supabase tables when the backend phase lands.
-
-const STORAGE_KEY = 'taybah:catalog';
+// SHARED CATALOG STORE — typed view over the persistent catalog documents
+// (public.catalog_docs, see catalogDocs.ts / migration 0006). The database is
+// the source of truth for products, categories and collections; there is no
+// browser-side persistence. Until an admin has migrated and verified the
+// catalog (`initialized`), the storefront keeps serving the built-in demo
+// catalog from catalogData and admin writes are refused.
+//
+// Every mutation returns a Promise that resolves only after the server
+// confirmed the write and a read-back matched; local state never runs ahead
+// of the database.
 
 export interface CatalogState {
   products: CatalogProduct[];
@@ -35,7 +47,7 @@ export interface CatalogState {
   collections: CatalogCollection[];
 }
 
-function seedState(): CatalogState {
+export function seedState(): CatalogState {
   return JSON.parse(
     JSON.stringify({
       products: seedProducts,
@@ -77,51 +89,32 @@ export function migrateCatalogState(raw: Partial<CatalogState> | null): CatalogS
   };
 }
 
-function readAll(): CatalogState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedState();
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return seedState();
-    return migrateCatalogState(parsed as Partial<CatalogState>);
-  } catch {
-    return seedState();
-  }
+function docData<T>(kind: 'product' | 'category' | 'collection'): T[] {
+  // structuredClone: migrateCatalogState normalizes in place, and the raw
+  // documents must stay exactly as the database returned them.
+  return docsOfKind(kind).map((d) => structuredClone(d.data) as T);
 }
 
-let catalog: CatalogState = readAll();
-const listeners = new Set<() => void>();
-
-function persist(next: CatalogState) {
-  catalog = next;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(catalog));
-  } catch {
-    // storage unavailable — state lives in memory for this session
-  }
-  listeners.forEach((l) => l());
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === STORAGE_KEY) {
-      catalog = readAll();
-      listeners.forEach((l) => l());
-    }
+function derive(): CatalogState {
+  const s = getDocsState();
+  if (!s.initialized) return seedState();
+  return migrateCatalogState({
+    products: docData<CatalogProduct>('product'),
+    categories: docData<CatalogCategory>('category'),
+    collections: docData<CatalogCollection>('collection'),
   });
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+let cache: { version: number; value: CatalogState } | null = null;
+
+export function getCatalog(): CatalogState {
+  const version = getDocsState().version;
+  if (!cache || cache.version !== version) cache = { version, value: derive() };
+  return cache.value;
 }
 
 export function useCatalog(): CatalogState {
-  return useSyncExternalStore(subscribe, () => catalog);
-}
-
-export function getCatalog(): CatalogState {
-  return catalog;
+  return useSyncExternalStore(subscribeDocs, getCatalog);
 }
 
 // ---- public-discovery rule ---------------------------------------------
@@ -263,15 +256,65 @@ export function resolveCartLines(lines: CartLine[], state: CatalogState): Resolv
 }
 
 // ---- mutations -----------------------------------------------------------
+// All return Promise<void> and reject with a PersistenceError (see
+// lib/persistence/errors.ts). Pass `expectedRevision` (from docRevision() at
+// the moment a form opened the record) to make a save fail with a conflict
+// instead of overwriting newer changes made elsewhere.
 
-export function upsertProduct(product: CatalogProduct) {
-  const exists = catalog.products.some((p) => p.id === product.id);
-  persist({
-    ...catalog,
-    products: exists
-      ? catalog.products.map((p) => (p.id === product.id ? product : p))
-      : [product, ...catalog.products],
-  });
+export interface WriteOpts {
+  expectedRevision?: number | null;
+}
+
+function nextProductSort(): number {
+  const docs = docsOfKind('product');
+  return docs.length ? Math.min(...docs.map((d) => d.sortOrder)) - 1 : 0;
+}
+
+// Op builders are exported so a form can combine several records (e.g. an
+// attribute plus every product that references one of its values) into ONE
+// atomic writeDocs() call.
+export function productDocOp(product: CatalogProduct, opts: WriteOpts = {}): DocPut {
+  const cur = getDoc('product', product.id);
+  return {
+    op: 'put',
+    kind: 'product',
+    id: product.id,
+    slug: product.slug,
+    visible: product.published,
+    sortOrder: cur ? cur.sortOrder : nextProductSort(),
+    data: product,
+    expectedRevision: opts.expectedRevision,
+  };
+}
+
+export function categoryDocOp(category: CatalogCategory, opts: WriteOpts = {}): DocPut {
+  return {
+    op: 'put',
+    kind: 'category',
+    id: category.slug,
+    slug: category.slug,
+    visible: category.visible,
+    sortOrder: category.order,
+    data: category,
+    expectedRevision: opts.expectedRevision,
+  };
+}
+
+export function collectionDocOp(collection: CatalogCollection, opts: WriteOpts = {}): DocPut {
+  return {
+    op: 'put',
+    kind: 'collection',
+    id: collection.slug,
+    slug: collection.slug,
+    visible: collection.visible,
+    sortOrder: collection.order,
+    data: collection,
+    expectedRevision: opts.expectedRevision,
+  };
+}
+
+export function upsertProduct(product: CatalogProduct, opts?: WriteOpts): Promise<void> {
+  return writeDocs([productDocOp(product, opts)]);
 }
 
 // ---- product reference info (deletion dialog) ------------------------------
@@ -306,42 +349,24 @@ export function productReferenceInfo(productId: string): ProductReferenceInfo {
   };
 }
 
-export function removeProduct(id: string) {
-  persist({ ...catalog, products: catalog.products.filter((p) => p.id !== id) });
+export function removeProduct(id: string): Promise<void> {
+  return writeDocs([{ op: 'delete', kind: 'product', id }]);
 }
 
-export function upsertCategory(category: CatalogCategory) {
-  const exists = catalog.categories.some((c) => c.slug === category.slug);
-  persist({
-    ...catalog,
-    categories: exists
-      ? catalog.categories.map((c) => (c.slug === category.slug ? category : c))
-      : [...catalog.categories, category],
-  });
+export function upsertCategory(category: CatalogCategory, opts?: WriteOpts): Promise<void> {
+  return writeDocs([categoryDocOp(category, opts)]);
 }
 
-export function removeCategory(slug: string) {
-  persist({
-    ...catalog,
-    categories: catalog.categories.filter((c) => c.slug !== slug),
-  });
+export function removeCategory(slug: string): Promise<void> {
+  return writeDocs([{ op: 'delete', kind: 'category', id: slug }]);
 }
 
-export function upsertCollection(collection: CatalogCollection) {
-  const exists = catalog.collections.some((c) => c.slug === collection.slug);
-  persist({
-    ...catalog,
-    collections: exists
-      ? catalog.collections.map((c) => (c.slug === collection.slug ? collection : c))
-      : [...catalog.collections, collection],
-  });
+export function upsertCollection(collection: CatalogCollection, opts?: WriteOpts): Promise<void> {
+  return writeDocs([collectionDocOp(collection, opts)]);
 }
 
 // Deletion is blocked in the UI while products still reference the
 // collection — this never touches product records as a side effect.
-export function removeCollection(slug: string) {
-  persist({
-    ...catalog,
-    collections: catalog.collections.filter((c) => c.slug !== slug),
-  });
+export function removeCollection(slug: string): Promise<void> {
+  return writeDocs([{ op: 'delete', kind: 'collection', id: slug }]);
 }

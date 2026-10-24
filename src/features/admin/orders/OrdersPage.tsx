@@ -4,7 +4,9 @@ import { ChevronLeft, MailWarning, Search } from 'lucide-react';
 import {
   ORDER_STATUS_LABELS_AR,
   ORDER_STATUSES,
+  reloadOrders,
   useOrders,
+  useOrdersLoadState,
 } from '../../storefront/checkout/orderStore';
 import { deliveryMethods } from '../../storefront/checkout/checkoutData';
 import { AdminPageHeader } from '../components/AdminPageHeader';
@@ -35,6 +37,7 @@ function dateOf(iso: string): string {
 
 export function OrdersPage() {
   const orders = useOrders();
+  const loadState = useOrdersLoadState();
   const [emailFailed, setEmailFailed] = useState<Set<string>>(new Set());
   useEffect(() => {
     // Best-effort: if the outbox isn't readable (migration not applied, not
@@ -139,15 +142,39 @@ export function OrdersPage() {
         )}
       </div>
 
+      {loadState.status === 'error' && (
+        <div
+          role="alert"
+          className="mt-4 flex flex-wrap items-center gap-3 rounded border border-burgundy/30 bg-burgundy/5 px-4 py-3 text-sm text-espresso"
+        >
+          <span className="flex-1 leading-6">
+            تعذّر تحميل الطلبات من الخادم ({loadState.code}) — القائمة أدناه قد تكون ناقصة أو قديمة، وليست دليلًا على عدم وجود طلبات.
+          </span>
+          <button
+            type="button"
+            onClick={() => void reloadOrders()}
+            className="rounded border border-espresso/25 px-4 py-1.5 text-xs font-medium text-espresso transition hover:border-espresso"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      )}
+
       <p className="mt-4 text-xs tracking-wide text-espresso/55">
         {filtered.length} من {orders.length} طلب
       </p>
 
-      {filtered.length === 0 ? (
+      {loadState.status === 'loading' && orders.length === 0 ? (
+        <p className="mt-5 rounded border border-dashed border-taupe bg-white py-14 text-center text-sm text-espresso/60">
+          جارٍ تحميل الطلبات…
+        </p>
+      ) : filtered.length === 0 ? (
         <div className="mt-5 rounded border border-dashed border-taupe bg-white py-14 text-center">
           <p className="text-sm text-espresso/60">
             {orders.length === 0
-              ? 'لا توجد طلبات بعد — أرسل طلبًا من صفحة إتمام الطلب في المتجر.'
+              ? loadState.status === 'error'
+                ? 'تعذّر تحميل الطلبات — راجع الرسالة أعلاه.'
+                : 'لا توجد طلبات بعد — أرسل طلبًا من صفحة إتمام الطلب في المتجر.'
               : 'لا توجد طلبات تطابق البحث أو عوامل التصفية الحالية.'}
           </p>
         </div>

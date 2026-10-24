@@ -6,18 +6,24 @@ import {
   type Localized,
 } from './catalogData';
 import { getCatalog } from './catalogStore';
+import {
+  docsOfKind,
+  getDocsState,
+  subscribeDocs,
+  writeDocs,
+  type DocOp,
+  type DocPut,
+} from './catalogDocs';
 import { getOrders } from '../checkout/orderStore';
 import { getCartLines } from '../cart/useCart';
 
-// PRODUCT ATTRIBUTE STORE — centralized reactive registry for option
-// definitions (colors, materials, sizes, and future custom attributes). Seeded
-// from the legacy hardcoded registries in catalogData so every existing key,
-// label, and hex survives untouched; Admin edits persist to localStorage and
-// sync across tabs. This store owns option DEFINITIONS — product records still
-// own their assignments (colors/materials/sizes fields). Variant behavior is a
-// later step; `required`/`variationCapable` are stored metadata only.
-
-const STORAGE_KEY = 'taybah:attributes';
+// PRODUCT ATTRIBUTE STORE — typed view over the persistent attribute documents
+// (public.catalog_docs, kind 'attribute'; see catalogDocs.ts). Option
+// DEFINITIONS (colors, materials, sizes, custom attributes) live in the
+// database; product records still own their assignments. Until the catalog
+// is migrated (`initialized`) the built-in defaults seeded from catalogData
+// are served read-only. Mutations resolve only after the server confirmed
+// the write.
 
 export type AttributeDisplay = 'swatch' | 'chips' | 'list';
 
@@ -68,7 +74,7 @@ function seedValues(
   }));
 }
 
-function defaultAttributes(): AttributeDef[] {
+export function defaultAttributes(): AttributeDef[] {
   return [
     {
       key: 'color',
@@ -167,7 +173,7 @@ function sanitizeAttr(raw: unknown, fallbackOrder: number): AttributeDef | null 
 
 // Stored attributes win as-is; any default attribute the stored data predates
 // is appended so future versions never destroy admin customizations.
-function migrate(raw: unknown): AttributeDef[] {
+export function migrateAttributes(raw: unknown, opts: { backfillDefaults: boolean }): AttributeDef[] {
   const defaults = defaultAttributes();
   if (!Array.isArray(raw)) return defaults;
   const out: AttributeDef[] = [];
@@ -187,8 +193,10 @@ function migrate(raw: unknown): AttributeDef[] {
   // raw keys). Saved values — labels, enabled state, order — are never touched
   // and nothing is removed.
   const sizeDefault = defaults.find((d) => d.key === 'size');
+  // Legacy browser data only: the database is authoritative, so a size the
+  // admin deleted must NOT be resurrected on every read.
   return out.map((a) => {
-    if (a.key !== 'size' || !sizeDefault) return a;
+    if (!opts.backfillDefaults || a.key !== 'size' || !sizeDefault) return a;
     const have = new Set(a.values.map((v) => v.key));
     const missing = sizeDefault.values.filter((v) => !have.has(v.key));
     if (missing.length === 0) return a;
@@ -197,58 +205,35 @@ function migrate(raw: unknown): AttributeDef[] {
   });
 }
 
-function readAll(): AttributeDef[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultAttributes();
-    return migrate(JSON.parse(raw));
-  } catch {
-    return defaultAttributes();
+function docAttributes(): AttributeDef[] {
+  const raw = docsOfKind('attribute').map((d) => structuredClone(d.data));
+  return migrateAttributes(raw, { backfillDefaults: false });
+}
+
+let cache: { version: number; value: AttributeDef[] } | null = null;
+
+export function getAttributes(): AttributeDef[] {
+  const version = getDocsState().version;
+  if (!cache || cache.version !== version) {
+    cache = {
+      version,
+      value: getDocsState().initialized ? docAttributes() : defaultAttributes(),
+    };
   }
-}
-
-let attributes: AttributeDef[] = readAll();
-const listeners = new Set<() => void>();
-
-function persist(next: AttributeDef[]) {
-  attributes = next;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(attributes));
-  } catch {
-    // storage unavailable — state lives in memory for this session
-  }
-  listeners.forEach((l) => l());
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === STORAGE_KEY) {
-      attributes = readAll();
-      listeners.forEach((l) => l());
-    }
-  });
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return cache.value;
 }
 
 export function useAttributes(): AttributeDef[] {
-  return useSyncExternalStore(subscribe, () => attributes);
-}
-
-export function getAttributes(): AttributeDef[] {
-  return attributes;
+  return useSyncExternalStore(subscribeDocs, getAttributes);
 }
 
 export function attributeByKey(key: string): AttributeDef | undefined {
-  return attributes.find((a) => a.key === key);
+  return getAttributes().find((a) => a.key === key);
 }
 
 // Enabled attributes applicable to a category (empty scope = all).
 export function attributesForCategory(categorySlug: string): AttributeDef[] {
-  return attributes
+  return getAttributes()
     .filter((a) => a.enabled && (a.categories.length === 0 || a.categories.includes(categorySlug)))
     .sort((a, b) => a.order - b.order);
 }
@@ -301,19 +286,40 @@ export function visibleAssignedValues(attrKey: string, keys: string[]): string[]
 
 // ---- mutations -------------------------------------------------------------
 
-export function saveAttributes(next: AttributeDef[]) {
-  persist(next);
+export interface AttributeWriteOpts {
+  expectedRevision?: number | null;
 }
 
-export function upsertAttribute(attr: AttributeDef) {
-  const exists = attributes.some((a) => a.key === attr.key);
-  persist(
-    exists ? attributes.map((a) => (a.key === attr.key ? attr : a)) : [...attributes, attr],
-  );
+export function attributeDocOp(attr: AttributeDef, opts: AttributeWriteOpts = {}): DocPut {
+  return {
+    op: 'put',
+    kind: 'attribute',
+    id: attr.key,
+    slug: null,
+    visible: true,
+    sortOrder: attr.order,
+    data: attr,
+    expectedRevision: opts.expectedRevision,
+  };
 }
 
-export function removeAttribute(key: string) {
-  persist(attributes.filter((a) => a.key !== key));
+// Replaces the whole list in ONE atomic write: every entry in `next` is
+// upserted, and stored attributes missing from it are deleted.
+export function saveAttributes(next: AttributeDef[]): Promise<void> {
+  const keep = new Set(next.map((a) => a.key));
+  const removed = docsOfKind('attribute').filter((d) => !keep.has(d.id));
+  return writeDocs([
+    ...next.map((a) => attributeDocOp(a)),
+    ...removed.map((d): DocOp => ({ op: 'delete', kind: 'attribute', id: d.id })),
+  ]);
+}
+
+export function upsertAttribute(attr: AttributeDef, opts?: AttributeWriteOpts): Promise<void> {
+  return writeDocs([attributeDocOp(attr, opts)]);
+}
+
+export function removeAttribute(key: string): Promise<void> {
+  return writeDocs([{ op: 'delete', kind: 'attribute', id: key }]);
 }
 
 // ---- reference scanning (deletion safety) ----------------------------------

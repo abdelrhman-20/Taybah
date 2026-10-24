@@ -1,8 +1,16 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { generateId } from '../utils/id';
 import { IMAGE_VARIANTS } from './imageVariants';
+import { isMediaRef, mediaPath, mediaPublicUrl } from './mediaStorage';
 
-// LOCAL IMAGE ASSET STORE — IndexedDB-backed blob storage for admin-uploaded
+// LEGACY LOCAL IMAGE STORE — IndexedDB-backed blob storage that admin uploads
+// used before images moved to Supabase Storage (see mediaStorage.ts). It is
+// still read here for two reasons only: (1) records saved before the
+// migration may still hold `local:<id>` refs that must keep rendering in the
+// browser that owns them, and (2) the migration tool reads these blobs to
+// upload them. New uploads never go to IndexedDB.
+//
+// Original description:
 // images. Entities (products, categories, homepage sections…) store only a
 // `local:<assetId>` reference string; the blob itself lives in IndexedDB, so
 // no Base64 ever enters localStorage and one blob is shared by every
@@ -15,8 +23,7 @@ const DB_VERSION = 1;
 const STORE = 'images';
 
 export const LOCAL_IMAGE_PREFIX = 'local:';
-export const MAX_IMAGE_MB = 5;
-export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export { MAX_IMAGE_MB, ACCEPTED_IMAGE_TYPES } from './mediaStorage';
 
 export interface ImageAssetMeta {
   id: string;
@@ -225,13 +232,20 @@ export function imageSrcSet(resolvedUrl: string): string | undefined {
   return parts.join(', ');
 }
 
-// Resolves any image reference to a renderable URL: `local:` refs become
+// Resolves any image reference to a renderable URL: `media:` refs become
+// public Storage URLs (synchronous); legacy `local:` refs become
 // object URLs (async, notified on arrival); external URLs return as-is;
 // missing/empty refs resolve to '' so callers can render a safe fallback.
 export function useImageUrl(ref: string | null | undefined): string {
   const id = ref && isLocalImageRef(ref) ? refToId(ref) : null;
   const url = useSyncExternalStore(subscribe, () =>
-    id ? (urlCache.get(id) ?? '') : ref ? withBase(toWebp(ref)) : '',
+    id
+      ? (urlCache.get(id) ?? '')
+      : ref && isMediaRef(ref)
+        ? mediaPublicUrl(mediaPath(ref))
+        : ref
+          ? withBase(toWebp(ref))
+          : '',
   );
   useEffect(() => {
     if (id) ensureLoaded(id);

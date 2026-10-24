@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogProduct, ProductVariant } from './catalogData';
 import type { GuestOrder, OrderLine } from '../checkout/orderStore';
-import { filterAttributes, type AttributeDef } from './attributeStore';
+import { filterAttributes, migrateAttributes, type AttributeDef } from './attributeStore';
+import { freshBackend, type Backend } from '../../../test/harness';
 
 // Dedicated coverage for the attribute registry: sanitization/migration,
 // mutations, label resolution, and — most importantly — the reference scans
 // that gate attribute/value deletion. The scans read catalog, orders, and
-// cart stores transitively, so every test boots the four persistence-backed
-// modules together against one fresh memory storage.
+// cart stores transitively, so every test boots those modules together
+// against one fresh FAKE backend (client.mock.ts) and a fresh cart storage.
+// Attribute definitions are persisted in catalog_docs (kind 'attribute').
 
 function memoryStorage(): Storage {
   const m = new Map<string, string>();
@@ -25,14 +27,39 @@ function memoryStorage(): Storage {
 
 let storage: Storage;
 
-async function stores() {
-  vi.resetModules();
+interface Ctx {
+  b: Backend;
+  catalog: typeof import('./catalogStore');
+  orders: typeof import('../checkout/orderStore');
+  cart: typeof import('../cart/useCart');
+  attrs: typeof import('./attributeStore');
+  docs: typeof import('./catalogDocs');
+  // Marks the catalog initialized and loads products (and optionally raw
+  // attribute documents) into the fake database, then re-reads it.
+  seed: (products?: CatalogProduct[], rawAttributes?: unknown[]) => Promise<void>;
+}
+
+async function stores(): Promise<Ctx> {
+  const b = await freshBackend('admin');
   vi.stubGlobal('localStorage', storage);
+  const docs = await import('./catalogDocs');
   const catalog = await import('./catalogStore');
   const orders = await import('../checkout/orderStore');
   const cart = await import('../cart/useCart');
   const attrs = await import('./attributeStore');
-  return { catalog, orders, cart, attrs };
+  await docs.whenDocsSettled();
+  const seed = async (products: CatalogProduct[] = [], rawAttributes?: unknown[]) => {
+    b.setInitialized(true);
+    products.forEach((p, i) =>
+      b.putDoc('product', p.id, p, { slug: p.slug, visible: p.published, sort_order: i }),
+    );
+    const list = rawAttributes ?? attrs.defaultAttributes();
+    (list as { key: string; order?: number }[]).forEach((a, i) =>
+      b.putDoc('attribute', a.key, a, { sort_order: a.order ?? i + 1 }),
+    );
+    await docs.refreshDocs();
+  };
+  return { b, catalog, orders, cart, attrs, docs, seed };
 }
 
 beforeEach(() => {
@@ -136,20 +163,11 @@ const attrDef = (
   ...extra,
 });
 
-// Deterministic catalog — seeds carry real color/material assignments that
-// would add noise to reference assertions.
-function seedCatalog(products: CatalogProduct[]) {
-  storage.setItem(
-    'taybah:catalog',
-    JSON.stringify({ products, categories: [], collections: [] }),
-  );
-}
-
 // ---- migration & sanitization -----------------------------------------------
 
 describe('migration and sanitization', () => {
-  it('seeds the three reserved attributes with their legacy options intact', async () => {
-    const { attrs } = await stores();
+  it('seeds the three reserved attributes with their legacy options intact (pre-migration defaults)', async () => {
+    const { attrs } = await stores(); // flag not set => built-in defaults
     const list = attrs.getAttributes();
     expect(list.map((a) => a.key)).toEqual(['color', 'material', 'size']);
     expect(list[0].display).toBe('swatch');
@@ -160,33 +178,30 @@ describe('migration and sanitization', () => {
     expect(attrs.attributeValueLabel('material', 'wool', 'ar')).toBe('صوف');
   });
 
-  it('drops malformed records and values, dedupes keys, appends missing defaults', async () => {
-    storage.setItem(
-      'taybah:attributes',
-      JSON.stringify([
-        { key: 'BAD KEY!', name: { ar: 'x' } },
-        { key: 'empty-name', name: { ar: '' } },
-        {
-          key: 'weave',
-          name: { ar: 'النسيج' },
-          display: 'swatch',
-          required: true,
-          variationCapable: true,
-          filterable: true,
-          enabled: true,
-          order: 1,
-          values: [
-            { key: 'flat', label: { ar: 'مسطح' }, enabled: true, order: 1 },
-            { key: 'UPPER-CASE', label: { ar: 'x' } },
-            { key: 'flat', label: { ar: 'مكرر' } },
-            { key: 'kilim', label: { ar: 'كليم' }, enabled: false, order: 2 },
-          ],
-        },
-        { key: 'weave', name: { ar: 'مكرر' } },
-      ]),
-    );
-    const { attrs } = await stores();
-    const list = attrs.getAttributes();
+  const malformed = [
+    { key: 'BAD KEY!', name: { ar: 'x' } },
+    { key: 'empty-name', name: { ar: '' } },
+    {
+      key: 'weave',
+      name: { ar: 'النسيج' },
+      display: 'swatch',
+      required: true,
+      variationCapable: true,
+      filterable: true,
+      enabled: true,
+      order: 1,
+      values: [
+        { key: 'flat', label: { ar: 'مسطح' }, enabled: true, order: 1 },
+        { key: 'UPPER-CASE', label: { ar: 'x' } },
+        { key: 'flat', label: { ar: 'مكرر' } },
+        { key: 'kilim', label: { ar: 'كليم' }, enabled: false, order: 2 },
+      ],
+    },
+    { key: 'weave', name: { ar: 'مكرر' } },
+  ];
+
+  it('drops malformed records and values, dedupes keys, appends missing defaults', () => {
+    const list = migrateAttributes(malformed, { backfillDefaults: true });
     expect(list.map((a) => a.key)).toEqual(['weave', 'color', 'material', 'size']);
     const weave = list[0];
     expect(weave.values.map((v) => v.key)).toEqual(['flat', 'kilim']);
@@ -195,10 +210,15 @@ describe('migration and sanitization', () => {
     expect(weave.filterable).toBe(true);
   });
 
-  it('lets stored admin edits win over the seed definitions', async () => {
-    storage.setItem(
-      'taybah:attributes',
-      JSON.stringify([
+  it('sanitizes the same way when the documents are read from the database', async () => {
+    const { attrs, seed } = await stores();
+    await seed([], malformed);
+    expect(attrs.getAttributes().map((a) => a.key)).toEqual(['weave', 'color', 'material', 'size']);
+  });
+
+  it('lets stored admin edits win over the seed definitions', () => {
+    const list = migrateAttributes(
+      [
         {
           key: 'color',
           name: { ar: 'اللون المعدّل' },
@@ -208,13 +228,25 @@ describe('migration and sanitization', () => {
           order: 1,
           values: [],
         },
-      ]),
+      ],
+      { backfillDefaults: true },
     );
-    const { attrs } = await stores();
-    const color = attrs.attributeByKey('color')!;
+    const color = list.find((a) => a.key === 'color')!;
     expect(color.name.ar).toBe('اللون المعدّل');
     expect(color.enabled).toBe(false);
-    expect(attrs.getAttributes().map((a) => a.key)).toEqual(['color', 'material', 'size']);
+    expect(list.map((a) => a.key)).toEqual(['color', 'material', 'size']);
+  });
+
+  it('legacy import backfills missing seeded sizes, but database reads never resurrect deleted ones', async () => {
+    const size = migrateAttributes([attrDef('size', [{ key: 'only', ar: 'وحيد' }])], {
+      backfillDefaults: true,
+    }).find((a) => a.key === 'size')!;
+    expect(size.values.length).toBeGreaterThan(1); // legacy import: seeded sizes added back
+
+    const { attrs, seed } = await stores();
+    await seed([], [attrDef('size', [{ key: 'only', ar: 'وحيد' }])]);
+    const dbSize = attrs.attributeByKey('size')!;
+    expect(dbSize.values.map((v) => v.key)).toEqual(['only']); // admin's deletion sticks
   });
 });
 
@@ -222,34 +254,56 @@ describe('migration and sanitization', () => {
 
 describe('mutations', () => {
   it('upserts new attributes and replaces existing ones without duplicating keys', async () => {
-    const { attrs } = await stores();
+    const { attrs, seed, b } = await stores();
+    await seed();
     const weave = attrDef('weave', [{ key: 'flat', ar: 'مسطح' }], {
       name: { ar: 'النسيج', en: 'Weave' },
     });
-    attrs.upsertAttribute(weave);
+    await attrs.upsertAttribute(weave);
     expect(attrs.attributeByKey('weave')?.name.ar).toBe('النسيج');
-    attrs.upsertAttribute({ ...weave, name: { ar: 'النسيج الجديد', en: 'Weave' } });
+    await attrs.upsertAttribute({ ...weave, name: { ar: 'النسيج الجديد', en: 'Weave' } });
     expect(attrs.getAttributes().filter((a) => a.key === 'weave')).toHaveLength(1);
     expect(attrs.attributeByKey('weave')?.name.ar).toBe('النسيج الجديد');
-    expect(
-      JSON.parse(storage.getItem('taybah:attributes')!).some(
-        (a: { key: string }) => a.key === 'weave',
-      ),
-    ).toBe(true);
+    const stored = b.tables.catalog_docs.find((d) => d.kind === 'attribute' && d.id === 'weave')!;
+    expect(stored.revision).toBe(2);
+    expect((stored.data as { name: { ar: string } }).name.ar).toBe('النسيج الجديد');
   });
 
   it('removes an attribute with no references', async () => {
-    seedCatalog([product()]);
-    const { attrs } = await stores();
-    attrs.upsertAttribute(attrDef('weave', [{ key: 'flat', ar: 'مسطح' }]));
+    const { attrs, seed, b } = await stores();
+    await seed([product()]);
+    await attrs.upsertAttribute(attrDef('weave', [{ key: 'flat', ar: 'مسطح' }]));
     expect(attrs.attributeReferences('weave')).toEqual([]);
-    attrs.removeAttribute('weave');
+    await attrs.removeAttribute('weave');
     expect(attrs.attributeByKey('weave')).toBeUndefined();
-    expect(
-      JSON.parse(storage.getItem('taybah:attributes')!).some(
-        (a: { key: string }) => a.key === 'weave',
-      ),
-    ).toBe(false);
+    expect(b.tables.catalog_docs.some((d) => d.kind === 'attribute' && d.id === 'weave')).toBe(false);
+  });
+
+  it('a rejected save does not change the displayed attribute', async () => {
+    const { attrs, seed, b } = await stores();
+    await seed();
+    b.failNext('rpc:catalog_write', { code: '42501', message: 'permission denied' });
+    await expect(
+      attrs.upsertAttribute(attrDef('weave', [{ key: 'flat', ar: 'مسطح' }])),
+    ).rejects.toMatchObject({ code: 'unauthorized' });
+    expect(attrs.attributeByKey('weave')).toBeUndefined();
+  });
+
+  it('refuses attribute edits before the catalog is migrated', async () => {
+    const { attrs } = await stores(); // never seeded => not initialized
+    await expect(
+      attrs.upsertAttribute(attrDef('weave', [{ key: 'flat', ar: 'مسطح' }])),
+    ).rejects.toMatchObject({ code: 'not_initialized' });
+  });
+
+  it('saveAttributes replaces the whole list atomically (upserts + deletes in one write)', async () => {
+    const { attrs, seed, b } = await stores();
+    await seed();
+    await attrs.upsertAttribute(attrDef('weave', [{ key: 'flat', ar: 'مسطح' }]));
+    const before = b.calls('rpc:catalog_write');
+    await attrs.saveAttributes(attrs.getAttributes().filter((a) => a.key !== 'weave'));
+    expect(b.calls('rpc:catalog_write') - before).toBe(1);
+    expect(attrs.attributeByKey('weave')).toBeUndefined();
   });
 });
 
@@ -257,19 +311,19 @@ describe('mutations', () => {
 
 describe('attribute reference scanning', () => {
   it('returns no references for an unused custom attribute', async () => {
-    seedCatalog([product({ attributes: { knot: ['loops'] } })]);
-    const { attrs } = await stores();
+    const { attrs, seed } = await stores();
+    await seed([product({ attributes: { knot: ['loops'] } })]);
     expect(attrs.attributeReferences('weave')).toEqual([]);
     expect(attrs.attributeValueReferences('weave', 'flat')).toEqual([]);
   });
 
   it('flags products assigning through legacy fields and the attributes map', async () => {
-    seedCatalog([
-      product({ id: 'p1', name: { ar: 'سجادة اللون', en: '' }, colors: ['burgundy'] }),
-      product({ id: 'p2', name: { ar: 'سجادة النسيج', en: '' }, attributes: { weave: ['flat'] } }),
-      product({ id: 'p3', name: { ar: 'سجادة المقاس', en: '' }, size: 'xl', sizes: [] }),
+    const { attrs, seed } = await stores();
+    await seed([
+      product({ id: 'p1', slug: 's1', name: { ar: 'سجادة اللون', en: '' }, colors: ['burgundy'] }),
+      product({ id: 'p2', slug: 's2', name: { ar: 'سجادة النسيج', en: '' }, attributes: { weave: ['flat'] } }),
+      product({ id: 'p3', slug: 's3', name: { ar: 'سجادة المقاس', en: '' }, size: 'xl', sizes: [] }),
     ]);
-    const { attrs } = await stores();
     expect(attrs.attributeReferences('color')).toEqual(['منتج: سجادة اللون']);
     expect(attrs.attributeReferences('weave')).toEqual(['منتج: سجادة النسيج']);
     // size resolves the union of default + selectable sizes — a product whose
@@ -279,9 +333,9 @@ describe('attribute reference scanning', () => {
   });
 
   it('flags variant combos even when the product fields never assign the axis', async () => {
+    const { attrs, seed } = await stores();
     const v = variant({ sku: 'V-ORPHAN', combo: { weave: 'flat' } });
-    seedCatalog([product({ variantAxes: ['weave'], variants: [v] })]);
-    const { attrs } = await stores();
+    await seed([product({ variantAxes: ['weave'], variants: [v] })]);
     expect(attrs.attributeReferences('weave')).toEqual(['تنويعات في «سجادة اختبار»: V-ORPHAN']);
     expect(attrs.attributeValueReferences('weave', 'flat')).toEqual([
       'تنويعات في «سجادة اختبار»: V-ORPHAN',
@@ -290,8 +344,8 @@ describe('attribute reference scanning', () => {
   });
 
   it('flags order snapshots through options[] axes', async () => {
-    seedCatalog([]);
-    const { attrs, orders } = await stores();
+    const { attrs, orders, seed } = await stores();
+    await seed([]);
     await orders.saveOrder(
       order([
         orderLine({
@@ -312,8 +366,8 @@ describe('attribute reference scanning', () => {
   });
 
   it('flags legacy order lines by reserved color/size keys — once per order', async () => {
-    seedCatalog([]);
-    const { attrs, orders } = await stores();
+    const { attrs, orders, seed } = await stores();
+    await seed([]);
     await orders.saveOrder(
       order([
         orderLine({ color: 'burgundy', size: 'large' }),
@@ -329,14 +383,10 @@ describe('attribute reference scanning', () => {
   });
 
   it('flags cart lines holding the attribute while they exist', async () => {
-    seedCatalog([]);
-    const { attrs, cart } = await stores();
+    const { attrs, cart, seed } = await stores();
+    await seed([]);
     const p = product();
-    cart.addToCart(
-      p,
-      { variant: variant({ sku: 'V-CART', combo: { weave: 'flat' } }) },
-      1,
-    );
+    cart.addToCart(p, { variant: variant({ sku: 'V-CART', combo: { weave: 'flat' } }) }, 1);
     cart.addToCart(p, { color: 'burgundy', size: 'large' }, 1);
     expect(attrs.attributeReferences('weave')).toEqual(['سلة التسوق']);
     expect(attrs.attributeValueReferences('weave', 'flat')).toEqual(['سلة التسوق']);
@@ -365,8 +415,9 @@ describe('value resolution and scoping', () => {
   });
 
   it('keeps disabled attributes and values label-resolvable but unselectable', async () => {
-    const { attrs } = await stores();
-    attrs.upsertAttribute(
+    const { attrs, seed } = await stores();
+    await seed();
+    await attrs.upsertAttribute(
       attrDef('weave', [
         { key: 'flat', ar: 'مسطح' },
         { key: 'kilim', ar: 'كليم', enabled: false },
@@ -378,7 +429,7 @@ describe('value resolution and scoping', () => {
     expect(attrs.attributeValueLabel('weave', 'kilim', 'ar')).toBe('كليم');
     expect(attrs.attributeValueLabel('weave', 'missing', 'ar')).toBe('missing');
 
-    attrs.saveAttributes(
+    await attrs.saveAttributes(
       attrs.getAttributes().map((a) => (a.key === 'weave' ? { ...a, enabled: false } : a)),
     );
     expect(attrs.enabledValues('weave')).toEqual([]);
@@ -386,8 +437,9 @@ describe('value resolution and scoping', () => {
   });
 
   it('scopes attributes by category, enabled state, and order', async () => {
-    const { attrs } = await stores();
-    attrs.saveAttributes([
+    const { attrs, seed } = await stores();
+    await seed();
+    await attrs.saveAttributes([
       ...attrs.getAttributes(),
       attrDef('rugs-only', [{ key: 'x', ar: 'س' }], { categories: ['rugs'], order: 4 }),
       attrDef('everywhere', [{ key: 'y', ar: 'ص' }], { order: 5 }),
@@ -444,18 +496,13 @@ describe('filterAttributes', () => {
   });
 
   it('filters enabled and disabled statuses', () => {
-    expect(filterAttributes(list(), '', 'enabled').map((a) => a.key)).toEqual([
-      'color',
-      'pile',
-    ]);
+    expect(filterAttributes(list(), '', 'enabled').map((a) => a.key)).toEqual(['color', 'pile']);
     expect(filterAttributes(list(), '', 'disabled').map((a) => a.key)).toEqual(['weave']);
     expect(filterAttributes(list(), '', 'all')).toHaveLength(3);
   });
 
   it('combines query and status filters', () => {
-    expect(filterAttributes(list(), 'نسيج', 'disabled').map((a) => a.key)).toEqual([
-      'weave',
-    ]);
+    expect(filterAttributes(list(), 'نسيج', 'disabled').map((a) => a.key)).toEqual(['weave']);
     expect(filterAttributes(list(), 'نسيج', 'enabled')).toEqual([]);
     expect(filterAttributes(list(), 'عنابي', 'disabled')).toEqual([]);
   });
@@ -483,15 +530,13 @@ describe('filterAttributes', () => {
 describe('visibleAssignedValues', () => {
   it('passes through every assigned value when the attribute and all values are enabled', async () => {
     const { attrs } = await stores();
-    expect(attrs.visibleAssignedValues('color', ['burgundy', 'ivory'])).toEqual([
-      'burgundy',
-      'ivory',
-    ]);
+    expect(attrs.visibleAssignedValues('color', ['burgundy', 'ivory'])).toEqual(['burgundy', 'ivory']);
   });
 
   it('drops a disabled value while keeping the still-enabled ones, in original order', async () => {
-    const { attrs } = await stores();
-    attrs.saveAttributes(
+    const { attrs, seed } = await stores();
+    await seed();
+    await attrs.saveAttributes(
       attrs
         .getAttributes()
         .map((a) =>
@@ -507,8 +552,9 @@ describe('visibleAssignedValues', () => {
   });
 
   it('returns nothing once the whole attribute is disabled, even if values stay enabled', async () => {
-    const { attrs } = await stores();
-    attrs.saveAttributes(
+    const { attrs, seed } = await stores();
+    await seed();
+    await attrs.saveAttributes(
       attrs.getAttributes().map((a) => (a.key === 'material' ? { ...a, enabled: false } : a)),
     );
     expect(attrs.visibleAssignedValues('material', ['wool', 'cotton'])).toEqual([]);
@@ -520,8 +566,9 @@ describe('visibleAssignedValues', () => {
   });
 
   it('never mutates the product-held key list it filters', async () => {
-    const { attrs } = await stores();
-    attrs.saveAttributes(
+    const { attrs, seed } = await stores();
+    await seed();
+    await attrs.saveAttributes(
       attrs
         .getAttributes()
         .map((a) =>

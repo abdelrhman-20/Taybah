@@ -10,6 +10,7 @@ import {
   type NavItemKind,
   type StorefrontNavItem,
 } from '../../storefront/layout/navStore';
+import { useSaveAction } from '../hooks/useSaveAction';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { generateId } from '../../shared/utils/id';
@@ -49,6 +50,11 @@ export function AdminNavigationPage() {
     null,
   );
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Row actions (reorder / show-hide), the add/edit form, and delete each get
+  // their own lifecycle so one error never hides under another.
+  const rowAction = useSaveAction();
+  const formAction = useSaveAction();
+  const delAction = useSaveAction();
 
   const parentOf = (group: NavGroup, parentId: string | null) =>
     parentId ? nav[group].find((i) => i.id === parentId) : undefined;
@@ -56,13 +62,14 @@ export function AdminNavigationPage() {
   const listFor = (group: NavGroup, parentId: string | null) =>
     parentId ? (parentOf(group, parentId)?.children ?? []) : nav[group];
 
-  const saveList = (group: NavGroup, parentId: string | null, items: StorefrontNavItem[]) => {
-    if (!parentId) {
-      saveNavGroup(group, items);
-      return;
-    }
+  const saveList = async (
+    group: NavGroup,
+    parentId: string | null,
+    items: StorefrontNavItem[],
+  ): Promise<void> => {
+    if (!parentId) return saveNavGroup(group, items);
     const parent = parentOf(group, parentId);
-    if (parent) upsertNavItem(group, { ...parent, children: items });
+    if (parent) return upsertNavItem(group, { ...parent, children: items });
   };
 
   const move = (group: NavGroup, parentId: string | null, i: number, dir: -1 | 1) => {
@@ -71,23 +78,27 @@ export function AdminNavigationPage() {
     if (t < 0 || t >= list.length) return;
     const next = [...list];
     [next[i], next[t]] = [next[t], next[i]];
-    saveList(group, parentId, next);
+    void rowAction.run(() => saveList(group, parentId, next));
   };
 
   const toggleVisible = (group: NavGroup, parentId: string | null, id: string) =>
-    saveList(
-      group,
-      parentId,
-      listFor(group, parentId).map((i) => (i.id === id ? { ...i, visible: !i.visible } : i)),
+    void rowAction.run(() =>
+      saveList(
+        group,
+        parentId,
+        listFor(group, parentId).map((i) => (i.id === id ? { ...i, visible: !i.visible } : i)),
+      ),
     );
 
   const openAdd = (group: NavGroup, parentId: string | null) => {
     setErrors({});
+    formAction.clearError();
     setDraft({ group, parentId, id: null, label: '', kind: 'internal', path: '', visible: true });
   };
 
   const openEdit = (group: NavGroup, parentId: string | null, item: StorefrontNavItem) => {
     setErrors({});
+    formAction.clearError();
     setDraft({
       group,
       parentId,
@@ -99,9 +110,9 @@ export function AdminNavigationPage() {
     });
   };
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!draft) return;
+    if (!draft || formAction.busy) return;
     const errs: Record<string, string> = {};
     if (draft.label.trim().length < 2) errs.label = 'اسم الرابط بالعربي مطلوب (حرفان على الأقل).';
     const existing = draft.id
@@ -133,14 +144,17 @@ export function AdminNavigationPage() {
       ...(existing?.children?.length ? { children: existing.children } : {}),
     };
     const list = listFor(draft.group, draft.parentId);
-    saveList(
-      draft.group,
-      draft.parentId,
-      list.some((i) => i.id === item.id)
-        ? list.map((i) => (i.id === item.id ? item : i))
-        : [...list, item],
+    // The draft stays open (and keeps its values) unless the server confirmed.
+    const result = await formAction.run(() =>
+      saveList(
+        draft.group,
+        draft.parentId,
+        list.some((i) => i.id === item.id)
+          ? list.map((i) => (i.id === item.id ? item : i))
+          : [...list, item],
+      ),
     );
-    setDraft(null);
+    if (result.ok) setDraft(null);
   };
 
   const delParent = del?.parentId ? parentOf(del.group, del.parentId) : undefined;
@@ -242,12 +256,18 @@ export function AdminNavigationPage() {
             ظاهر في المتجر
           </label>
         </div>
+        {formAction.error && (
+          <p role="alert" className="mt-4 text-sm font-medium text-burgundy">
+            {formAction.error}
+          </p>
+        )}
         <div className="mt-5 flex items-center gap-3">
           <button
             type="submit"
-            className="rounded bg-burgundy px-6 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+            disabled={formAction.busy}
+            className="rounded bg-burgundy px-6 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
           >
-            {draft.id ? 'حفظ الرابط' : 'إضافة الرابط'}
+            {formAction.busy ? 'جارٍ الحفظ…' : draft.id ? 'حفظ الرابط' : 'إضافة الرابط'}
           </button>
           <button
             type="button"
@@ -404,8 +424,14 @@ export function AdminNavigationPage() {
     <div className="mx-auto max-w-4xl space-y-8">
       <AdminPageHeader
         title="التنقل"
-        description="روابط متجر الواجهة — القائمة الرئيسية وروابط الفوتر. التعديلات تظهر فورًا؛ روابط لوحة الإدارة لا تُدار من هنا."
+        description="روابط متجر الواجهة — القائمة الرئيسية وروابط الفوتر. تُحفظ على الخادم وتظهر لكل الزوار بعد تأكيد الحفظ؛ روابط لوحة الإدارة لا تُدار من هنا."
       />
+
+      {rowAction.error && (
+        <p role="alert" className="text-sm font-medium text-burgundy">
+          {rowAction.error}
+        </p>
+      )}
 
       {GROUPS.map((g) => (
         <section key={g.key} aria-labelledby={`nav-${g.key}`}>
@@ -457,23 +483,29 @@ export function AdminNavigationPage() {
               } الصفحة أو المحتوى الذي يشير إليه الرابط لا يتأثر — يُحذف الرابط فقط.`
             : ''
         }
-        confirmLabel="حذف الرابط"
-        onConfirm={() => {
-          if (del) {
+        confirmLabel={delAction.busy ? 'جارٍ الحذف…' : 'حذف الرابط'}
+        confirmDisabled={delAction.busy}
+        error={delAction.error}
+        onConfirm={async () => {
+          if (!del) return;
+          const result = await delAction.run(async () => {
             if (del.parentId) {
               const parent = parentOf(del.group, del.parentId);
               if (parent)
-                upsertNavItem(del.group, {
+                await upsertNavItem(del.group, {
                   ...parent,
                   children: (parent.children ?? []).filter((c) => c.id !== del.id),
                 });
             } else {
-              removeNavItem(del.group, del.id);
+              await removeNavItem(del.group, del.id);
             }
-          }
+          });
+          if (result.ok) setDel(null);
+        }}
+        onCancel={() => {
+          delAction.clearError();
           setDel(null);
         }}
-        onCancel={() => setDel(null)}
       />
     </div>
   );
