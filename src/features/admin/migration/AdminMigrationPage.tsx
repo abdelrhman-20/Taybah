@@ -252,7 +252,7 @@ export function AdminMigrationPage() {
   const skuBlocked = Boolean(
     plan && (plan.skuProblems.length > 0 || dry?.conflicts.some((c) => isSkuConflict(c.reason))),
   );
-  const canExecute = Boolean(plan && backupSaved && dry && !skuBlocked && !run.busy);
+  const canExecute = Boolean(plan && backupSaved && dry && !skuBlocked && !run.busy && !docs.schemaMissing);
   const canFinalize = Boolean(verify?.ok && report && report.conflicts.length === 0 && !docs.initialized);
   const localHomeRefs = homeLocalRefs();
 
@@ -291,6 +291,18 @@ export function AdminMigrationPage() {
           <p role="alert" className="mt-2 text-xs font-medium text-burgundy">
             {cutover.error}
           </p>
+        )}
+        {docs.schemaMissing && (
+          <div role="alert" className="mt-3 rounded border border-burgundy/30 bg-burgundy/5 p-3 text-xs leading-6 text-espresso">
+            <p className="font-medium text-burgundy">
+              جداول الكتالوج غير موجودة في قاعدة البيانات — الفحص التجريبي والترحيل معطّلان حتى يُطبَّق الملف 0006.
+            </p>
+            <p>
+              في Supabase Dashboard ← SQL Editor ← New query: الصق محتوى الملف{' '}
+              <span dir="ltr">supabase/migrations/0006_catalog_documents.sql</span> ثم Run، ثم أعد تحميل هذه الصفحة.
+              يمكنك قراءة بيانات المتصفح وتنزيل النسخة الاحتياطية الآن؛ لا يتغيّر أي شيء.
+            </p>
+          </div>
         )}
       </section>
 
@@ -376,7 +388,7 @@ export function AdminMigrationPage() {
 
       <Step n={3} title="فحص تجريبي (لا يغيّر شيئًا)">
         <p>يقارن سجلاتك بما هو مخزّن في قاعدة البيانات ويبيّن ما سيُضاف وما هو مطابق وما فيه تعارض.</p>
-        <button type="button" className={ghostBtn} disabled={!plan || dryRun.busy} onClick={doDryRun}>
+        <button type="button" className={ghostBtn} disabled={!plan || dryRun.busy || docs.schemaMissing} onClick={doDryRun}>
           {dryRun.busy ? 'جارٍ الفحص…' : 'تشغيل الفحص التجريبي'}
         </button>
         {dryRun.error && (

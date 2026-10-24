@@ -150,3 +150,21 @@ describe('migration page — run', () => {
     expect(b.tables.catalog_docs).toHaveLength(before);
   });
 });
+
+describe('migration page — schema missing (0006 not applied)', () => {
+  it('explains the blocker, keeps backup available, and locks dry run and import', async () => {
+    const b = await freshBackend('admin');
+    delete b.tables.catalog_docs;
+    delete b.tables.app_settings;
+    await mount(b);
+    expect(screen.getByText(/جداول الكتالوج غير موجودة في قاعدة البيانات/)).toBeTruthy();
+    expect(screen.getByText(/0006_catalog_documents\.sql/)).toBeTruthy();
+
+    await readSource();
+    await userEvent.click(btn('تنزيل النسخة الاحتياطية'));
+    await screen.findByText('تم تجهيز النسخة الاحتياطية.');
+    expect(btn('تشغيل الفحص التجريبي').disabled).toBe(true);
+    expect(btn('بدء الترحيل').disabled).toBe(true);
+    expect(btn('اعتماد وتفعيل').disabled).toBe(true);
+  });
+});
