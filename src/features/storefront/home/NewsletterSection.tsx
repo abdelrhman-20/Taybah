@@ -25,6 +25,7 @@ export function NewsletterSection({ content }: { content: HomeContent['newslette
           src={content.image}
           alt=""
           loading="lazy"
+          sizes="100vw"
           className="absolute inset-0 -z-20 size-full object-cover"
         />
       )}

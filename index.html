@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>طيبة — Taybah</title>
+    <!-- LCP: the hero slide renders only after the JS bundle evaluates — start
+         its fetch during HTML parsing instead of waiting for React. -->
+    <link rel="preload" as="image" href="%BASE_URL%images/home/hero-1.webp" fetchpriority="high" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

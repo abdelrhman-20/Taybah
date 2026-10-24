@@ -46,6 +46,7 @@ export function EditorialBanner({ content }: { content: HomeContent['editorial']
           src={content.image}
           alt="مجموعة طيبة التحريرية"
           loading="lazy"
+          sizes="(max-width: 1024px) 100vw, 50vw"
           className="h-full w-full object-cover max-lg:aspect-[16/10]"
         />
       </div>

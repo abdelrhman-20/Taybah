@@ -25,6 +25,7 @@ export function TaybahStory({ content }: { content: HomeContent['story'] }) {
           src={content.image}
           alt={content.title}
           loading="lazy"
+          sizes="(max-width: 1024px) 100vw, 64vw"
           className="size-full object-cover lg:[mask-image:linear-gradient(to_right,#000_55%,transparent)] lg:ltr:[mask-image:linear-gradient(to_left,#000_55%,transparent)]"
         />
       </RevealItem>

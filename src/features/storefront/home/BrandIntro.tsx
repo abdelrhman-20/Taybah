@@ -18,6 +18,7 @@ export function BrandIntro({ content }: { content: HomeContent['brand'] }) {
             src={content.image}
             alt="تفاصيل حِرفة طيبة"
             loading="lazy"
+            sizes="(max-width: 1024px) 100vw, 40vw"
             className="aspect-[5/6] w-full rounded-sm object-cover shadow-[0_28px_56px_-22px_rgba(41,34,30,0.32)]"
           />
         </RevealItem>

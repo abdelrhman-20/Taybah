@@ -45,8 +45,8 @@ interface Locale {
 
 // Local photography already in the project (see public/images/home/CREDITS.md).
 export const shippingReturnsImages = {
-  hero: '/images/home/hero-3.jpg',
-  banner: '/images/home/collection-diwan.jpg',
+  hero: '/images/home/hero-3.webp',
+  banner: '/images/home/collection-diwan.webp',
 };
 
 export const shippingReturnsContent: Record<'ar' | 'en', Locale> = {

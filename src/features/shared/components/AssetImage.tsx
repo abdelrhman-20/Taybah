@@ -1,5 +1,5 @@
 import { useState, type ImgHTMLAttributes } from 'react';
-import { useImageUrl } from '../assets/imageStore';
+import { imageSrcSet, useImageUrl } from '../assets/imageStore';
 
 // Drop-in <img> replacement for any image that may hold a local asset
 // reference (`local:<id>`) or an external URL. While a local asset resolves —
@@ -9,6 +9,8 @@ export function AssetImage({
   src,
   alt = '',
   className = '',
+  sizes,
+  srcSet,
   ...rest
 }: ImgHTMLAttributes<HTMLImageElement>) {
   const url = useImageUrl(src);
@@ -24,11 +26,16 @@ export function AssetImage({
       />
     );
   }
+  const resolvedSrcSet = srcSet ?? imageSrcSet(url);
   return (
     <img
       src={url}
       alt={alt}
       className={className}
+      srcSet={resolvedSrcSet}
+      // A srcset without sizes makes the browser assume 100vw — fine for
+      // full-bleed imagery, generous for cards (callers pass their own).
+      sizes={sizes ?? (resolvedSrcSet ? '100vw' : undefined)}
       {...rest}
       onError={(e) => {
         setFailedUrl(url);

@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { generateId } from '../utils/id';
+import { IMAGE_VARIANTS } from './imageVariants';
 
 // LOCAL IMAGE ASSET STORE — IndexedDB-backed blob storage for admin-uploaded
 // images. Entities (products, categories, homepage sections…) store only a
@@ -200,8 +201,28 @@ export function useImageAssets(): ImageAssetMeta[] | null {
 // `/images/...` would resolve against the domain root and 404.
 const ASSET_BASE = import.meta.env.BASE_URL;
 
+// Images ship as WebP — refs written before the conversion (source data,
+// admin-saved content, cached localStorage) may still end in .jpg/.jpeg, so
+// point them at the converted file instead of a 404.
+function toWebp(ref: string): string {
+  return /\.jpe?g$/i.test(ref) && ref.includes('/images/') ? ref.replace(/\.jpe?g$/i, '.webp') : ref;
+}
+
 function withBase(ref: string): string {
   return ref.startsWith('/') ? `${ASSET_BASE}${ref.slice(1)}` : ref;
+}
+
+// Builds a srcset for a resolved local image URL using the generated variant
+// manifest (scripts/optimize-images.mjs). External and blob: URLs (admin
+// uploads) return undefined — nothing to vary.
+export function imageSrcSet(resolvedUrl: string): string | undefined {
+  const m = resolvedUrl.match(/\/images\/home\/([^/]+)\.webp$/);
+  const entry = m && IMAGE_VARIANTS[m[1]];
+  if (!m || !entry || !entry.variants.length) return undefined;
+  const dir = resolvedUrl.slice(0, resolvedUrl.length - m[1].length - '.webp'.length);
+  const parts = entry.variants.map((w) => `${dir}${m[1]}-${w}.webp ${w}w`);
+  parts.push(`${resolvedUrl} ${entry.full}w`);
+  return parts.join(', ');
 }
 
 // Resolves any image reference to a renderable URL: `local:` refs become
@@ -210,7 +231,7 @@ function withBase(ref: string): string {
 export function useImageUrl(ref: string | null | undefined): string {
   const id = ref && isLocalImageRef(ref) ? refToId(ref) : null;
   const url = useSyncExternalStore(subscribe, () =>
-    id ? (urlCache.get(id) ?? '') : ref ? withBase(ref) : '',
+    id ? (urlCache.get(id) ?? '') : ref ? withBase(toWebp(ref)) : '',
   );
   useEffect(() => {
     if (id) ensureLoaded(id);

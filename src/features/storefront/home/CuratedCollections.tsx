@@ -33,6 +33,7 @@ function CollectionCard({
         src={image}
         alt=""
         loading="lazy"
+        sizes="(max-width: 640px) 84vw, (max-width: 1024px) 60vw, 33vw"
         className="absolute inset-0 -z-10 size-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
       />
       <div

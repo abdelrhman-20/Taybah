@@ -25,9 +25,9 @@ interface Locale {
 
 // Local photography already in the project (see public/images/home/CREDITS.md).
 export const aboutImages = {
-  hero: '/images/home/story-weaving.jpg',
-  story: '/images/home/collection-heritage.jpg',
-  banner: '/images/home/hero-2.jpg',
+  hero: '/images/home/story-weaving.webp',
+  story: '/images/home/collection-heritage.webp',
+  banner: '/images/home/hero-2.webp',
 };
 
 export const aboutContent: Record<'ar' | 'en', Locale> = {

@@ -30,7 +30,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'سجاد معقود يدويًا ومنسوج بأنماط تراثية ومعاصرة — قطع تُؤَسِّس الغرفة.',
       en: 'Hand-knotted and flatwoven rugs in heritage and contemporary patterns — pieces that anchor a room.',
     },
-    image: '/images/home/category-rugs.jpg',
+    image: '/images/home/category-rugs.webp',
   },
   {
     slug: 'carpets',
@@ -41,7 +41,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'موكيت بخامات صوفية ومزيجة يغطي المساحات الكبيرة بدفء وثبات.',
       en: 'Wool and blended carpets covering larger spaces with warmth and weight.',
     },
-    image: '/images/home/category-carpets.jpg',
+    image: '/images/home/category-carpets.webp',
   },
   {
     slug: 'curtains',
@@ -52,7 +52,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'ستائر كتان ومخمل وفوال — من الشفاف العابر إلى العازل الفاخر.',
       en: 'Linen, velvet, and voile curtains — from airy sheer to opulent blackout.',
     },
-    image: '/images/home/category-curtains.jpg',
+    image: '/images/home/category-curtains.webp',
   },
   {
     slug: 'furnishings',
@@ -63,7 +63,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'أغطية وبطانيات ولُحُف تُكمِل القطع الكبيرة بلمسات ناعمة.',
       en: 'Covers, throws, and quilts that finish larger pieces with soft layers.',
     },
-    image: '/images/home/category-furnishings.jpg',
+    image: '/images/home/category-furnishings.webp',
   },
   {
     slug: 'accessories',
@@ -74,7 +74,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'تفاصيل صغيرة تصنع الفرق — مصابيح ومزهريات وقطع حائط مختارة.',
       en: 'Small details that make the difference — lamps, vases, and wall pieces.',
     },
-    image: '/images/home/category-accessories.jpg',
+    image: '/images/home/category-accessories.webp',
   },
 ];
 
@@ -101,7 +101,7 @@ export const catalogCollections: CatalogCollection[] = [
       ar: 'إيقاعٌ من الزخارف الهندسية والألوان الترابية — أصالة النمط ونظافة الخط المعاصر.',
       en: 'A rhythm of geometric motifs and earthen tones — heritage pattern with clean contemporary lines.',
     },
-    image: '/images/home/collection-diwan.jpg',
+    image: '/images/home/collection-diwan.webp',
   },
   {
     slug: 'heritage',
@@ -112,7 +112,7 @@ export const catalogCollections: CatalogCollection[] = [
       ar: 'قطع تحمل ذاكرة الحِرفة — ميداليات وزخارف كلاسيكية بأصالة متوارثة.',
       en: 'Pieces carrying the memory of the craft — classic medallions and inherited motifs.',
     },
-    image: '/images/home/collection-heritage.jpg',
+    image: '/images/home/collection-heritage.webp',
   },
   {
     slug: 'atelier',
@@ -123,7 +123,7 @@ export const catalogCollections: CatalogCollection[] = [
       ar: 'خطوط نظيفة وخامات طبيعية للبيوت المعاصرة — هدوء بلا زخرفة زائدة.',
       en: 'Clean lines and natural materials for contemporary homes — calm without ornament.',
     },
-    image: '/images/home/collection-atelier.jpg',
+    image: '/images/home/collection-atelier.webp',
   },
 ];
 

@@ -32,6 +32,7 @@ function CategoryTile({ category, ratio }: { category: CatalogCategory; ratio: s
           src={category.image}
           alt={category.name[locale]}
           loading="lazy"
+          sizes="(max-width: 640px) 48vw, (max-width: 1024px) 30vw, 22vw"
           className={`${ratio} w-full object-cover transition-transform duration-[400ms] ease-out group-hover:scale-[1.06]`}
         />
         {/* Flush full-width glass bar, anchored directly to the card's own

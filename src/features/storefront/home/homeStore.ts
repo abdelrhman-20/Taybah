@@ -288,11 +288,11 @@ function defaultContent(): HomeContent {
       title: 'تسوّق حسب القسم',
       subtitle: 'لكل زاوية في منزلك … اكتشف تشكيلتنا المختارة بعناية',
       cards: [
-        { slug: 'rugs', title: '', subtitle: 'حرفة أصيلة تحت قدميك', image: '/images/home/category-rugs.jpg' },
-        { slug: 'curtains', title: '', subtitle: 'توازن بين الضوء والخصوصية', image: '/images/home/category-curtains.jpg' },
-        { slug: 'carpets', title: '', subtitle: 'دفء يمنحك الراحة', image: '/images/home/category-carpets.jpg' },
-        { slug: 'furnishings', title: '', subtitle: 'راحة وأناقة تدوم', image: '/images/home/category-furnishings.jpg' },
-        { slug: 'accessories', title: '', subtitle: 'تفاصيل تصنع الفرق', image: '/images/home/category-accessories.jpg' },
+        { slug: 'rugs', title: '', subtitle: 'حرفة أصيلة تحت قدميك', image: '/images/home/category-rugs.webp' },
+        { slug: 'curtains', title: '', subtitle: 'توازن بين الضوء والخصوصية', image: '/images/home/category-curtains.webp' },
+        { slug: 'carpets', title: '', subtitle: 'دفء يمنحك الراحة', image: '/images/home/category-carpets.webp' },
+        { slug: 'furnishings', title: '', subtitle: 'راحة وأناقة تدوم', image: '/images/home/category-furnishings.webp' },
+        { slug: 'accessories', title: '', subtitle: 'تفاصيل تصنع الفرق', image: '/images/home/category-accessories.webp' },
       ],
     },
     collections: {
@@ -303,9 +303,9 @@ function defaultContent(): HomeContent {
       actionTo: '/collections',
       ctaLabel: 'تسوّق المجموعة',
       cards: [
-        { slug: 'diwan', title: 'ديوان', description: '', image: '/images/home/collection-diwan.jpg' },
-        { slug: 'heritage', title: 'تراث', description: '', image: '/images/home/collection-heritage.jpg' },
-        { slug: 'atelier', title: 'أتيليه', description: '', image: '/images/home/collection-atelier.jpg' },
+        { slug: 'diwan', title: 'ديوان', description: '', image: '/images/home/collection-diwan.webp' },
+        { slug: 'heritage', title: 'تراث', description: '', image: '/images/home/collection-heritage.webp' },
+        { slug: 'atelier', title: 'أتيليه', description: '', image: '/images/home/collection-atelier.webp' },
       ],
     },
     bestSellers: {
@@ -371,7 +371,7 @@ function defaultContent(): HomeContent {
       placeholder: 'بريدك الإلكتروني',
       submitLabel: 'اشترك',
       privacy: 'نحترم بريدك — يمكنك إلغاء الاشتراك في أي وقت.',
-      image: '/images/home/product-p19-3.jpg',
+      image: '/images/home/product-p19-3.webp',
     },
   };
 }

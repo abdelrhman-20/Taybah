@@ -132,6 +132,7 @@ export function ProductListing({
           src={banner}
           alt=""
           loading="lazy"
+          sizes="100vw"
           className="mt-8 h-44 w-full object-cover sm:h-64 lg:h-80"
         />
       )}

@@ -37,6 +37,7 @@ export function FeaturedCollection({ content }: { content: HomeContent['collecti
                 src={content.image1}
                 alt={`${collection.name[locale]} — قطعة أولى`}
                 loading="lazy"
+                sizes="(max-width: 640px) 48vw, 45vw"
                 className="aspect-[3/4] w-full rounded-sm object-cover shadow-[0_24px_48px_-22px_rgba(41,34,30,0.3)] transition-transform duration-500 group-hover:scale-[1.02]"
               />
             </RevealItem>
@@ -45,6 +46,7 @@ export function FeaturedCollection({ content }: { content: HomeContent['collecti
                 src={content.image2}
                 alt={`${collection.name[locale]} — قطعة ثانية`}
                 loading="lazy"
+                sizes="(max-width: 640px) 48vw, 45vw"
                 className="mt-8 aspect-[3/4] w-full rounded-sm object-cover shadow-[0_24px_48px_-22px_rgba(41,34,30,0.3)] transition-transform duration-500 group-hover:scale-[1.02] sm:mt-14"
               />
             </RevealItem>

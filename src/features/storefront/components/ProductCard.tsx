@@ -115,6 +115,7 @@ export function ProductCard({
             src={product.image}
             alt={product.name[loc]}
             loading="lazy"
+            sizes="(max-width: 640px) 48vw, 25vw"
             className={`${compact ? 'aspect-[3/2] sm:aspect-[2/1]' : 'aspect-[4/5]'} w-full object-cover transition duration-700 group-hover:scale-105`}
           />
           <AssetImage
@@ -122,6 +123,7 @@ export function ProductCard({
             alt=""
             loading="lazy"
             aria-hidden
+            sizes="(max-width: 640px) 48vw, 25vw"
             className={`absolute inset-0 ${compact ? 'aspect-[3/2] sm:aspect-[2/1]' : 'aspect-[4/5]'} w-full object-cover opacity-0 transition duration-700 group-hover:opacity-100`}
           />
           {/* Dark tint — a flat overlay transitions reliably everywhere,

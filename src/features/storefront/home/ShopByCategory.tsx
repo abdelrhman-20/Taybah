@@ -27,6 +27,7 @@ function CategoryCard({ card, category }: { card: ShopCategoryCard; category: Ca
         src={image}
         alt=""
         loading="lazy"
+        sizes="(max-width: 640px) 42vw, 20vw"
         className="aspect-[5/6] w-full object-cover transition-transform sm:aspect-[4/3] duration-500 ease-out group-hover:scale-[1.05] motion-reduce:transition-none motion-reduce:group-hover:scale-100 lg:aspect-[13/10]"
       />
       <div

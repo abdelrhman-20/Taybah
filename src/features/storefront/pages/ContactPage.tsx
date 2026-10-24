@@ -17,8 +17,8 @@ import {
 } from './contactForm';
 
 const IMAGES = {
-  hero: '/images/home/hero-1.jpg',
-  banner: '/images/home/collection-heritage.jpg',
+  hero: '/images/home/hero-1.webp',
+  banner: '/images/home/collection-heritage.webp',
 };
 
 const copy = {

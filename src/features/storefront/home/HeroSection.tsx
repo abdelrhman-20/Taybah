@@ -56,6 +56,8 @@ function SlideLayer({
         src={slide.image}
         alt={slide.title}
         className="absolute inset-0 size-full object-cover"
+        sizes="100vw"
+        fetchPriority="high"
       />
       <div
         className="pointer-events-none absolute inset-0 bg-espresso/30 from-espresso/80 via-espresso/45 to-transparent sm:bg-transparent rtl:bg-gradient-to-l ltr:bg-gradient-to-r max-sm:bg-espresso/55 max-sm:bg-none!"

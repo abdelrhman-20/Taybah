@@ -34,8 +34,8 @@ interface FaqLocale {
 
 // Local photography already in the project (see public/images/home/CREDITS.md).
 export const faqImages = {
-  hero: '/images/home/hero-2.jpg',
-  banner: '/images/home/collection-atelier.jpg',
+  hero: '/images/home/hero-2.webp',
+  banner: '/images/home/collection-atelier.webp',
 };
 
 export const faqContent: Record<'ar' | 'en', FaqLocale> = {

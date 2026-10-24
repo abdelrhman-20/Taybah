@@ -34,6 +34,7 @@ export function CollectionsPage() {
                 src={collection.image}
                 alt={collection.name[locale]}
                 loading="lazy"
+                sizes="(max-width: 768px) 100vw, 50vw"
                 className="aspect-[4/3] w-full object-cover transition duration-700 hover:scale-[1.03]"
               />
             </div>
