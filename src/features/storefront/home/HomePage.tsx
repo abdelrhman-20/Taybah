@@ -1,5 +1,9 @@
 import { Fragment } from 'react';
 import { HeroSection } from './HeroSection';
+import { ShopByCategory } from './ShopByCategory';
+import { CuratedCollections } from './CuratedCollections';
+import { BestSellers } from './BestSellers';
+import { TaybahStory } from './TaybahStory';
 import { FeaturedCategories } from './FeaturedCategories';
 import { FeaturedProducts } from './FeaturedProducts';
 import { BrandIntro } from './BrandIntro';
@@ -17,6 +21,14 @@ export function HomePage() {
         // The hero is above the fold on load — it animates in immediately
         // (see HeroSection) rather than waiting for a scroll-triggered reveal.
         return <HeroSection content={home.hero} />;
+      case 'shopCategories':
+        return <ShopByCategory content={home.shopCategories} />;
+      case 'collections':
+        return <CuratedCollections content={home.collections} />;
+      case 'bestSellers':
+        return <BestSellers content={home.bestSellers} />;
+      case 'story':
+        return <TaybahStory content={home.story} />;
       case 'categories':
         return <FeaturedCategories content={home.categories} />;
       case 'products':
@@ -38,8 +50,18 @@ export function HomePage() {
         .map((s) =>
           s.key === 'hero' ? (
             <Fragment key={s.key}>{render(s.key)}</Fragment>
+          ) : s.key === 'newsletter' ? (
+            // Newsletter is a compact band — a short lift reads better than
+            // the ambient section fade.
+            <Reveal key={s.key} variant="lift" duration={500}>
+              {render(s.key)}
+            </Reveal>
           ) : (
-            <Reveal key={s.key}>{render(s.key)}</Reveal>
+            // A soft whole-section fade underneath each section's own
+            // staggered RevealItems keeps the motion layered but quiet.
+            <Reveal key={s.key} variant="fade" duration={600}>
+              {render(s.key)}
+            </Reveal>
           ),
         )}
     </>

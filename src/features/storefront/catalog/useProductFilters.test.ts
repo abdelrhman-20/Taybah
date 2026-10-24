@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { CatalogProduct } from './catalogData';
+import type { CatalogProduct, ProductVariant } from './catalogData';
+import type { AttributeDef } from './attributeStore';
 import {
   activeFilterCount,
   applyFilters,
   defaultFilters,
+  discountPercent,
+  effectivePrice,
+  isPurchasable,
   parseFilters,
+  productColors,
   type FilterState,
   type FilterValueSets,
 } from './useProductFilters';
@@ -128,9 +133,11 @@ describe('activeFilterCount', () => {
       custom: { weave: ['flat', 'hand-knotted'] },
       priceBucket: '1000-3000',
       inStockOnly: true,
-      sort: 'featured',
+      newOnly: true,
+      offersOnly: true,
+      sort: 'newest', // sorting is not a filter
     };
-    expect(activeFilterCount(f)).toBe(1 + 2 + 1 + 2 + 1 + 1);
+    expect(activeFilterCount(f)).toBe(1 + 2 + 1 + 2 + 1 + 1 + 1 + 1);
   });
 });
 
@@ -210,5 +217,305 @@ describe('applyFilters', () => {
       'b',
       'a',
     ]);
+  });
+});
+
+// ---- colours, availability, new arrivals, offers, price, sorting -----------
+
+const attr = (key: string, values: string[]): AttributeDef => ({
+  key,
+  name: { ar: key, en: key },
+  display: 'chips',
+  categories: [],
+  required: false,
+  variationCapable: true,
+  filterable: true,
+  enabled: true,
+  order: 1,
+  values: values.map((k, i) => ({ key: k, label: { ar: k, en: k }, enabled: true, order: i + 1 })),
+});
+const ATTRS = [attr('color', ['burgundy', 'ivory', 'sand']), attr('size', ['s', 'm', 'l'])];
+
+const variant = (over: Partial<ProductVariant> = {}): ProductVariant => ({
+  id: 'v1',
+  sku: 'TYB-V1',
+  combo: { size: 's' },
+  price: null,
+  compareAtPrice: null,
+  availability: 'in_stock',
+  stockQuantity: null,
+  image: null,
+  active: true,
+  ...over,
+});
+const withVariants = (variants: ProductVariant[], over: Partial<CatalogProduct> = {}) =>
+  product({ variantAxes: ['size'], variants, ...over });
+
+const ids = (list: CatalogProduct[]) => list.map((p) => p.id);
+
+describe('colour filter', () => {
+  const list = [
+    product({ id: 'a', colors: ['burgundy', 'ivory'] }),
+    product({ id: 'b', colors: ['ivory'] }),
+    product({ id: 'c', colors: ['sand'] }),
+    product({ id: 'd', colors: [] }), // no colour data
+  ];
+
+  it('matches a product that has at least one selected colour (OR between colours)', () => {
+    expect(ids(applyFilters(list, { ...defaultFilters, colors: ['burgundy'] }))).toEqual(['a']);
+    expect(ids(applyFilters(list, { ...defaultFilters, colors: ['burgundy', 'sand'] })).sort()).toEqual(['a', 'c']);
+  });
+
+  it('never assigns a colour to products without colour data', () => {
+    const all = applyFilters(list, { ...defaultFilters, colors: ['burgundy', 'ivory', 'sand'] });
+    expect(ids(all)).not.toContain('d');
+  });
+
+  it('normalizes case and whitespace in stored and selected values', () => {
+    const odd = [product({ id: 'x', colors: [' Burgundy '] })];
+    expect(ids(applyFilters(odd, { ...defaultFilters, colors: ['burgundy'] }))).toEqual(['x']);
+    expect(ids(applyFilters([product({ id: 'y', colors: ['ivory'] })], { ...defaultFilters, colors: ['IVORY'] }))).toEqual(['y']);
+  });
+
+  it('also matches the colour of a buyable variant, but not an inactive or sold-out one', () => {
+    const p = withVariants(
+      [
+        variant({ id: 'v1', combo: { size: 's', color: 'sand' } }),
+        variant({ id: 'v2', combo: { size: 'm', color: 'ivory' }, active: false }),
+        variant({ id: 'v3', combo: { size: 'l', color: 'burgundy' }, availability: 'out_of_stock' }),
+      ],
+      { id: 'vp', colors: [] },
+    );
+    expect(productColors(p)).toEqual(new Set(['sand']));
+    expect(ids(applyFilters([p], { ...defaultFilters, colors: ['sand'] }))).toEqual(['vp']);
+    expect(ids(applyFilters([p], { ...defaultFilters, colors: ['ivory'] }))).toEqual([]);
+  });
+});
+
+describe('availability filter', () => {
+  it('uses the same purchasability rule as the product card (simple products)', () => {
+    const list = [product({ id: 'a', availability: 'out_of_stock' }), product({ id: 'b', availability: 'low_stock' })];
+    expect(ids(applyFilters(list, { ...defaultFilters, inStockOnly: true }, { attrs: ATTRS }))).toEqual(['b']);
+  });
+
+  it('judges variant products by their buyable variants, not the product-level flag', () => {
+    const soldOut = withVariants([variant({ availability: 'out_of_stock' })], { id: 'so', availability: 'in_stock' });
+    const oneLeft = withVariants(
+      [variant({ id: 'x', availability: 'out_of_stock' }), variant({ id: 'y', combo: { size: 'm' }, availability: 'low_stock' })],
+      { id: 'ol', availability: 'out_of_stock' },
+    );
+    expect(isPurchasable(soldOut, ATTRS)).toBe(false);
+    expect(isPurchasable(oneLeft, ATTRS)).toBe(true);
+    expect(ids(applyFilters([soldOut, oneLeft], { ...defaultFilters, inStockOnly: true }, { attrs: ATTRS }))).toEqual(['ol']);
+  });
+});
+
+describe('new arrivals filter', () => {
+  it('uses the explicit isNew flag — never the date or the array position', () => {
+    const list = [
+      product({ id: 'old', isNew: false, createdAt: '2099-01-01' }), // recent date, not flagged
+      product({ id: 'flagged', isNew: true, createdAt: '2020-01-01' }),
+    ];
+    expect(ids(applyFilters(list, { ...defaultFilters, newOnly: true }))).toEqual(['flagged']);
+  });
+});
+
+describe('offers and discounts filter', () => {
+  const list = [
+    product({ id: 'sale', price: 800, compareAtPrice: 1000 }),
+    product({ id: 'none', price: 800, compareAtPrice: null }),
+    product({ id: 'bogus', price: 800, compareAtPrice: 800 }), // not a real discount
+    product({ id: 'higher', price: 900, compareAtPrice: 500 }), // compare-at below price: invalid
+    product({ id: 'tiny', price: 9990, compareAtPrice: 10000 }), // rounds to 0%: card shows no discount
+  ];
+
+  it('keeps only products with a valid, active discount', () => {
+    expect(ids(applyFilters(list, { ...defaultFilters, offersOnly: true }))).toEqual(['sale']);
+  });
+
+  it('agrees with the percentage the card shows', () => {
+    expect(discountPercent(list[0])).toBe(20);
+    expect(discountPercent(list[2])).toBe(0);
+    expect(discountPercent(list[4])).toBe(0);
+  });
+
+  it('uses variant-level prices for variant products', () => {
+    const p = withVariants([variant({ price: 700, compareAtPrice: 1000 })], { id: 'vv', price: 1000, compareAtPrice: null });
+    expect(discountPercent(p)).toBe(30);
+    expect(ids(applyFilters([p], { ...defaultFilters, offersOnly: true }))).toEqual(['vv']);
+  });
+});
+
+describe('price range boundaries and discounted prices', () => {
+  const bucketOf = (key: string, ps: CatalogProduct[]) =>
+    ids(applyFilters(ps, { ...defaultFilters, priceBucket: key }));
+  const edge = [
+    product({ id: 'p999', price: 999 }),
+    product({ id: 'p1000', price: 1000 }),
+    product({ id: 'p2999', price: 2999 }),
+    product({ id: 'p3000', price: 3000 }),
+    product({ id: 'p6999', price: 6999 }),
+    product({ id: 'p7000', price: 7000 }),
+  ];
+
+  it('puts every boundary price in exactly one bucket (no gaps, no overlap)', () => {
+    const buckets = ['under-1000', '1000-3000', '3000-7000', 'over-7000'];
+    for (const prod of edge) {
+      const hits = buckets.filter((b) => bucketOf(b, [prod]).length === 1);
+      expect(hits, prod.id).toHaveLength(1);
+    }
+    expect(bucketOf('under-1000', edge)).toEqual(['p999']);
+    expect(bucketOf('1000-3000', edge)).toEqual(['p1000', 'p2999']);
+    expect(bucketOf('3000-7000', edge)).toEqual(['p3000', 'p6999']);
+    expect(bucketOf('over-7000', edge)).toEqual(['p7000']);
+  });
+
+  it('filters on the discounted selling price, not the original price', () => {
+    const p = product({ id: 'disc', price: 950, compareAtPrice: 2000 });
+    expect(bucketOf('under-1000', [p])).toEqual(['disc']);
+    expect(bucketOf('1000-3000', [p])).toEqual([]);
+  });
+
+  it('uses the lowest buyable variant price for variant products', () => {
+    const p = withVariants(
+      [variant({ price: 2500 }), variant({ id: 'v2', combo: { size: 'm' }, price: 900 }), variant({ id: 'v3', combo: { size: 'l' }, price: 400, availability: 'out_of_stock' })],
+      { id: 'vp', price: 2500 },
+    );
+    expect(effectivePrice(p)).toBe(900);
+    expect(bucketOf('under-1000', [p])).toEqual(['vp']);
+  });
+});
+
+describe('combined filters', () => {
+  const list = [
+    product({ id: 'ok', colors: ['burgundy'], price: 800, compareAtPrice: 1200, isNew: true }),
+    product({ id: 'wrongColor', colors: ['ivory'], price: 800, compareAtPrice: 1200, isNew: true }),
+    product({ id: 'soldOut', colors: ['burgundy'], price: 800, compareAtPrice: 1200, isNew: true, availability: 'out_of_stock' }),
+    product({ id: 'noOffer', colors: ['burgundy'], price: 800, isNew: true }),
+    product({ id: 'pricey', colors: ['burgundy'], price: 5000, compareAtPrice: 6000, isNew: true }),
+    product({ id: 'notNew', colors: ['burgundy'], price: 800, compareAtPrice: 1200, isNew: false }),
+  ];
+
+  it('returns only products that satisfy every selected group at once', () => {
+    const f: FilterState = {
+      ...defaultFilters,
+      colors: ['burgundy'],
+      inStockOnly: true,
+      offersOnly: true,
+      newOnly: true,
+      priceBucket: 'under-1000',
+    };
+    expect(ids(applyFilters(list, f, { attrs: ATTRS }))).toEqual(['ok']);
+  });
+
+  it('removing one filter widens the result without touching the others', () => {
+    const f: FilterState = { ...defaultFilters, colors: ['burgundy'], inStockOnly: true, offersOnly: true, priceBucket: 'under-1000' };
+    expect(ids(applyFilters(list, f, { attrs: ATTRS })).sort()).toEqual(['notNew', 'ok']);
+  });
+
+  it('sorts the filtered set (not the whole catalog)', () => {
+    const f: FilterState = { ...defaultFilters, colors: ['burgundy'], offersOnly: true, sort: 'price-desc' };
+    expect(ids(applyFilters(list, f, { attrs: ATTRS }))).toEqual(['pricey', 'notNew', 'ok', 'soldOut']) // equal prices tie-break by id;
+  });
+
+  it('paginates the final filtered + sorted set', () => {
+    const many = Array.from({ length: 10 }, (_, i) =>
+      product({ id: `m${String(i).padStart(2, '0')}`, colors: i % 2 ? ['burgundy'] : ['ivory'], price: 100 + i }),
+    );
+    const results = applyFilters(many, { ...defaultFilters, colors: ['burgundy'], sort: 'price-desc' });
+    expect(results).toHaveLength(5);
+    expect(ids(results.slice(0, 2))).toEqual(['m09', 'm07']); // page 1 of the final set
+    expect(ids(results.slice(2, 4))).toEqual(['m05', 'm03']); // load more continues it
+  });
+
+  it('reset (defaultFilters) restores the full list and zero active filters', () => {
+    expect(applyFilters(list, defaultFilters, { attrs: ATTRS })).toHaveLength(list.length);
+    expect(activeFilterCount(defaultFilters)).toBe(0);
+  });
+
+  it('gives an empty result when nothing matches', () => {
+    expect(applyFilters(list, { ...defaultFilters, colors: ['sand'] }, { attrs: ATTRS })).toEqual([]);
+  });
+});
+
+describe('sorting modes', () => {
+  const list = [
+    product({ id: 'a', price: 900, compareAtPrice: 1000, createdAt: '2025-03-01' }), // 10%
+    product({ id: 'b', price: 500, compareAtPrice: 1000, createdAt: '2025-01-01' }), // 50%
+    product({ id: 'c', price: 700, compareAtPrice: null, createdAt: '2025-06-01', featured: true }),
+    product({ id: 'd', price: 300, compareAtPrice: 400, createdAt: '2025-05-01' }), // 25%
+  ];
+
+  it('newest uses createdAt, newest first', () => {
+    expect(ids(applyFilters(list, { ...defaultFilters, sort: 'newest' }))).toEqual(['c', 'd', 'a', 'b']);
+  });
+
+  it('price sorts use the selling price', () => {
+    expect(ids(applyFilters(list, { ...defaultFilters, sort: 'price-asc' }))).toEqual(['d', 'b', 'c', 'a']);
+    expect(ids(applyFilters(list, { ...defaultFilters, sort: 'price-desc' }))).toEqual(['a', 'c', 'b', 'd']);
+  });
+
+  it('largest discount ranks by real percentage and puts undiscounted products last', () => {
+    expect(ids(applyFilters(list, { ...defaultFilters, sort: 'discount' }))).toEqual(['b', 'd', 'a', 'c']);
+  });
+
+  it('best-selling falls back to the featured order when there is no real sales data', () => {
+    const fallback = ids(applyFilters(list, { ...defaultFilters, sort: 'best-selling' }));
+    expect(fallback).toEqual(ids(applyFilters(list, defaultFilters)));
+    expect(fallback[0]).toBe('c'); // featured first
+  });
+
+  it('best-selling ranks by real sales counts when they are supplied', () => {
+    const sales = { a: 5, b: 40, d: 12 };
+    expect(ids(applyFilters(list, { ...defaultFilters, sort: 'best-selling' }, { salesCounts: sales }))).toEqual(['b', 'd', 'a', 'c']);
+  });
+
+  it('keeps the established default sort (featured first, then id)', () => {
+    expect(ids(applyFilters(list, defaultFilters))).toEqual(['c', 'a', 'b', 'd']);
+  });
+});
+
+describe('URL round-trip for the new controls', () => {
+  it('parses new, offers and the new sort keys', () => {
+    const f = parseFilters(new URLSearchParams('new=1&offers=1&stock=1&sort=discount'), new Set(), valueSets());
+    expect(f.newOnly).toBe(true);
+    expect(f.offersOnly).toBe(true);
+    expect(f.inStockOnly).toBe(true);
+    expect(f.sort).toBe('discount');
+    expect(parseFilters(new URLSearchParams('sort=best-selling'), new Set(), valueSets()).sort).toBe('best-selling');
+  });
+});
+
+describe('older product records with missing optional fields', () => {
+  it('filters and sorts without throwing', () => {
+    const legacy = {
+      id: 'old',
+      slug: 'old',
+      sku: 'OLD',
+      name: { ar: 'قديم', en: 'Old' },
+      description: { ar: '', en: '' },
+      category: 'rugs',
+      collection: 'diwan',
+      price: 500,
+      availability: 'in_stock',
+      size: '',
+      sizes: [],
+      image: 'i',
+      imageHover: 'i',
+      images: ['i'],
+    } as unknown as CatalogProduct; // no colors/materials/createdAt/isNew/featured/compareAtPrice
+    const all: FilterState[] = [
+      { ...defaultFilters, colors: ['burgundy'] },
+      { ...defaultFilters, offersOnly: true },
+      { ...defaultFilters, newOnly: true },
+      { ...defaultFilters, inStockOnly: true },
+      { ...defaultFilters, materials: ['wool'] },
+      { ...defaultFilters, priceBucket: 'under-1000' },
+    ];
+    for (const f of all) expect(() => applyFilters([legacy, product()], f, { attrs: ATTRS })).not.toThrow();
+    for (const sort of ['featured', 'best-selling', 'newest', 'price-asc', 'price-desc', 'discount'] as const) {
+      expect(applyFilters([legacy, product()], { ...defaultFilters, sort })).toHaveLength(2);
+    }
+    expect(ids(applyFilters([legacy], { ...defaultFilters, priceBucket: 'under-1000' }))).toEqual(['old']);
   });
 });

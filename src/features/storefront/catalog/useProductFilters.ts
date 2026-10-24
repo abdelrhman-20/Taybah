@@ -7,12 +7,25 @@ import {
   RESERVED_ATTRIBUTE_KEYS,
   type AttributeDef,
 } from './attributeStore';
+import {
+  hasPurchasableVariant,
+  isVariantProduct,
+  variantCompareAtPrice,
+  variantPrice,
+  variantPurchasable,
+} from './variants';
 
-// Client-side filtering/sorting over the mock catalog. Filter state lives in the
+// Client-side filtering/sorting over the catalog. Filter state lives in the
 // URL query string so a filtered listing is shareable (FEATURES.md §filter-state).
 // Later this maps to the same params sent to product_listing_summary queries.
 
-export type SortKey = 'featured' | 'price-asc' | 'price-desc' | 'newest';
+export type SortKey =
+  | 'featured'
+  | 'best-selling'
+  | 'newest'
+  | 'price-asc'
+  | 'price-desc'
+  | 'discount';
 
 export interface FilterState {
   categories: string[];
@@ -23,6 +36,10 @@ export interface FilterState {
   custom: Record<string, string[]>;
   priceBucket: string | null;
   inStockOnly: boolean;
+  // Admin-flagged new arrivals (`isNew`) only.
+  newOnly: boolean;
+  // Products with a valid, active discount only.
+  offersOnly: boolean;
   sort: SortKey;
 }
 
@@ -34,10 +51,12 @@ export const defaultFilters: FilterState = {
   custom: {},
   priceBucket: null,
   inStockOnly: false,
+  newOnly: false,
+  offersOnly: false,
   sort: 'featured',
 };
 
-const SORT_KEYS: SortKey[] = ['featured', 'price-asc', 'price-desc', 'newest'];
+const SORT_KEYS: SortKey[] = ['featured', 'best-selling', 'newest', 'price-asc', 'price-desc', 'discount'];
 const PRICE_KEYS = new Set(priceBuckets.map((b) => b.key));
 
 // Option facets validate against the attribute store — the param names stay
@@ -83,6 +102,8 @@ export function parseFilters(
     ) as Record<string, string[]>,
     priceBucket: price && PRICE_KEYS.has(price) ? price : null,
     inStockOnly: params.get('stock') === '1',
+    newOnly: params.get('new') === '1',
+    offersOnly: params.get('offers') === '1',
     sort: sort && SORT_KEYS.includes(sort as SortKey) ? (sort as SortKey) : 'featured',
   };
 }
@@ -98,6 +119,8 @@ function toSearchParams(f: FilterState): URLSearchParams {
   }
   if (f.priceBucket) p.set('price', f.priceBucket);
   if (f.inStockOnly) p.set('stock', '1');
+  if (f.newOnly) p.set('new', '1');
+  if (f.offersOnly) p.set('offers', '1');
   if (f.sort !== 'featured') p.set('sort', f.sort);
   return p;
 }
@@ -114,37 +137,124 @@ export function activeFilterCount(f: FilterState): number {
     f.sizes.length +
     (f.priceBucket ? 1 : 0) +
     (f.inStockOnly ? 1 : 0) +
+    (f.newOnly ? 1 : 0) +
+    (f.offersOnly ? 1 : 0) +
     Object.values(f.custom).reduce((n, v) => n + v.length, 0)
   );
 }
 
-export function applyFilters(products: CatalogProduct[], f: FilterState): CatalogProduct[] {
+// ---- product facts used by filters and sorts -------------------------------
+// One definition each, so the filter, the sort and what the card shows agree.
+// All tolerate older records that lack optional fields.
+
+// Variants a customer could actually buy; none for simple products.
+function buyableVariants(p: CatalogProduct) {
+  return (p.variants ?? []).filter((v) => variantPurchasable(v));
+}
+
+// The price the customer pays now. `price` is already the selling price (the
+// original price lives in `compareAtPrice`), so a discounted product is
+// filtered and sorted by what it actually costs. Variant products use their
+// lowest buyable variant price (variants inherit the product price by default).
+export function effectivePrice(p: CatalogProduct): number {
+  const buyable = buyableVariants(p);
+  if (buyable.length === 0) return p.price;
+  return Math.min(...buyable.map((v) => variantPrice(v, p)));
+}
+
+// Whole-percent discount shown on the card (0 = no valid discount). A discount
+// is valid only when the original price really exceeds the selling price and
+// rounds to at least 1%.
+export function discountPercent(p: CatalogProduct): number {
+  const best = (price: number, compareAt: number | null) =>
+    compareAt !== null && compareAt > price ? Math.round((1 - price / compareAt) * 100) : 0;
+  const buyable = buyableVariants(p);
+  if (buyable.length === 0) return best(p.price, p.compareAtPrice ?? null);
+  return Math.max(...buyable.map((v) => best(variantPrice(v, p), variantCompareAtPrice(v, p))));
+}
+
+// The product card's "out of stock" rule (see resolveQuickAdd), reproduced
+// without its other assumptions so it also works for older records: variant
+// products are purchasable when some variant is buyable, simple products when
+// not marked out of stock. "Available only" therefore never contradicts a card.
+export function isPurchasable(p: CatalogProduct, attrs?: AttributeDef[]): boolean {
+  if (isVariantProduct(p)) return attrs ? hasPurchasableVariant(p, attrs) : buyableVariants(p).length > 0;
+  return p.availability !== 'out_of_stock';
+}
+
+const norm = (s: string) => s.trim().toLowerCase();
+
+// Normalized color keys a product genuinely has: its own assigned colors plus
+// the color of any buyable variant. Nothing is inferred (never from images).
+export function productColors(p: CatalogProduct): Set<string> {
+  const out = new Set<string>();
+  for (const c of productAxisValues({ ...p, colors: p.colors ?? [] }, 'color')) out.add(norm(c));
+  for (const v of buyableVariants(p)) {
+    const c = v.combo?.['color'];
+    if (c) out.add(norm(c));
+  }
+  return out;
+}
+
+export interface FilterContext {
+  // Needed to apply the exact availability rule to variant products.
+  attrs?: AttributeDef[];
+  // REAL sales counts per product id. Absent = no reliable sales data, in
+  // which case "best-selling" falls back to the store's featured order.
+  salesCounts?: Record<string, number>;
+}
+
+const byFeatured = (a: CatalogProduct, b: CatalogProduct) =>
+  Number(b.featured === true) - Number(a.featured === true) || a.id.localeCompare(b.id);
+
+export function applyFilters(
+  products: CatalogProduct[],
+  f: FilterState,
+  ctx: FilterContext = {},
+): CatalogProduct[] {
   const bucket = f.priceBucket ? priceBuckets.find((b) => b.key === f.priceBucket) : null;
+  const wantedColors = f.colors.map(norm);
   const filtered = products.filter((p) => {
     if (f.categories.length && !f.categories.includes(p.category)) return false;
-    if (f.colors.length && !p.colors.some((c) => f.colors.includes(c))) return false;
-    if (f.materials.length && !p.materials.some((m) => f.materials.includes(m))) return false;
+    if (wantedColors.length) {
+      const have = productColors(p);
+      if (!wantedColors.some((c) => have.has(c))) return false; // OR between colors
+    }
+    if (f.materials.length && !(p.materials ?? []).some((m) => f.materials.includes(m))) return false;
     if (f.sizes.length && !f.sizes.includes(p.size)) return false;
-    if (f.inStockOnly && p.availability === 'out_of_stock') return false;
-    if (bucket && (p.price < bucket.min || (bucket.max !== null && p.price >= bucket.max))) return false;
+    if (f.inStockOnly && !isPurchasable(p, ctx.attrs)) return false;
+    if (f.newOnly && p.isNew !== true) return false;
+    if (f.offersOnly && discountPercent(p) === 0) return false;
+    if (bucket) {
+      const price = effectivePrice(p);
+      if (price < bucket.min || (bucket.max !== null && price >= bucket.max)) return false;
+    }
     for (const [attrKey, selected] of Object.entries(f.custom)) {
       if (!selected.length) continue;
       const assigned = productAxisValues(p, attrKey);
       if (!selected.some((v) => assigned.includes(v))) return false;
     }
-    return true;
+    return true; // every active group must pass (AND between groups)
   });
   switch (f.sort) {
     case 'price-asc':
-      return [...filtered].sort((a, b) => a.price - b.price);
+      return [...filtered].sort((a, b) => effectivePrice(a) - effectivePrice(b) || byFeatured(a, b));
     case 'price-desc':
-      return [...filtered].sort((a, b) => b.price - a.price);
+      return [...filtered].sort((a, b) => effectivePrice(b) - effectivePrice(a) || byFeatured(a, b));
     case 'newest':
-      return [...filtered].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    default:
       return [...filtered].sort(
-        (a, b) => Number(b.featured) - Number(a.featured) || a.id.localeCompare(b.id),
+        (a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '') || byFeatured(a, b),
       );
+    case 'discount':
+      // Undiscounted products (0%) naturally rank below every discounted one.
+      return [...filtered].sort((a, b) => discountPercent(b) - discountPercent(a) || byFeatured(a, b));
+    case 'best-selling': {
+      const sales = ctx.salesCounts;
+      if (!sales) return [...filtered].sort(byFeatured); // no real data → store order
+      return [...filtered].sort((a, b) => (sales[b.id] ?? 0) - (sales[a.id] ?? 0) || byFeatured(a, b));
+    }
+    default:
+      return [...filtered].sort(byFeatured);
   }
 }
 
@@ -188,6 +298,8 @@ export function useProductFilters(categoryKeys: string[]) {
     [searchParams, setSearchParams],
   );
 
+  // Every setter patches only its own field, so changing one filter never
+  // resets the others (or the sort).
   const set = useCallback(
     (patch: Partial<FilterState>) => update({ ...filters, ...patch }),
     [filters, update],
@@ -214,7 +326,10 @@ export function useProductFilters(categoryKeys: string[]) {
     toggleAttrValue,
     setPriceBucket: (key: string | null) => set({ priceBucket: key }),
     setInStockOnly: (v: boolean) => set({ inStockOnly: v }),
+    setNewOnly: (v: boolean) => set({ newOnly: v }),
+    setOffersOnly: (v: boolean) => set({ offersOnly: v }),
     setSort: (sort: SortKey) => set({ sort }),
+    // Resets every filter AND the sort, keeping only the search query (see update).
     clearAll: () => update(defaultFilters),
   };
 }

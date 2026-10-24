@@ -13,15 +13,19 @@ import {
 
 export const HOTLINE_NUMBER = '19600';
 
+// Optional contact details. Leave empty until the client confirms the real
+// values — the Contact page shows each one only when it is set, so nothing
+// placeholder-looking ever reaches customers.
+export const STORE_EMAIL = '';
+export const STORE_ADDRESS = '';
+
 export interface SocialLink {
   id: string;
   label: string;
   href: string;
   icon: typeof FacebookIcon;
   // Platform brand color, applied as the pill's hover background (see
-  // SocialSidebar's .social-pill — the pill is neutral at rest and takes
-  // this color on hover, per CSS custom property since Tailwind can't
-  // statically pick up a dynamically-built `hover:bg-[...]` class name).
+  // the announcement bar's icons; the hero rail uses a fixed brand tone).
   color: string;
 }
 

@@ -33,10 +33,14 @@ beforeEach(() => {
 });
 
 describe('homeStore — defaults and persistence', () => {
-  it('seeds all 7 sections visible, in the documented default order', async () => {
+  it('seeds all 11 sections in the documented order, with the superseded/unused five hidden', async () => {
     const home = await freshHomeStore();
     expect(home.getHomeContent().sections.map((s) => s.key)).toEqual([
       'hero',
+      'shopCategories',
+      'collections',
+      'bestSellers',
+      'story',
       'categories',
       'products',
       'brand',
@@ -44,14 +48,22 @@ describe('homeStore — defaults and persistence', () => {
       'collection',
       'newsletter',
     ]);
-    expect(home.getHomeContent().sections.every((s) => s.visible)).toBe(true);
+    expect(
+      home
+        .getHomeContent()
+        .sections.filter((s) => !s.visible)
+        .map((s) => s.key),
+    ).toEqual(['categories', 'products', 'brand', 'editorial', 'collection']);
   });
 
   it('persists a section update and survives a fresh module reload', async () => {
     const home1 = await freshHomeStore();
-    home1.updateHomeSection('hero', { ...home1.getHomeContent().hero, title: 'عنوان جديد' });
+    const hero = home1.getHomeContent().hero;
+    home1.updateHomeSection('hero', {
+      slides: hero.slides.map((s, i) => (i === 0 ? { ...s, title: 'عنوان جديد' } : s)),
+    });
     const home2 = await freshHomeStore();
-    expect(home2.getHomeContent().hero.title).toBe('عنوان جديد');
+    expect(home2.getHomeContent().hero.slides[0].title).toBe('عنوان جديد');
   });
 
   it('setHomeSections reorders and toggles visibility together', async () => {
@@ -66,12 +78,13 @@ describe('homeStore — defaults and persistence', () => {
 
   it('resetHomeContent restores the seeded defaults after edits', async () => {
     const home = await freshHomeStore();
-    home.updateHomeSection('hero', { ...home.getHomeContent().hero, title: 'مؤقت' });
+    const hero = home.getHomeContent().hero;
+    home.updateHomeSection('hero', { slides: hero.slides.map((s) => ({ ...s, title: 'مؤقت' })) });
     home.setHomeSections([{ key: 'hero', visible: false }]);
     home.resetHomeContent();
-    expect(home.getHomeContent().hero.title).not.toBe('مؤقت');
-    expect(home.getHomeContent().sections).toHaveLength(7);
-    expect(home.getHomeContent().sections.every((s) => s.visible)).toBe(true);
+    expect(home.getHomeContent().hero.slides[0].title).not.toBe('مؤقت');
+    expect(home.getHomeContent().sections).toHaveLength(11);
+    expect(home.getHomeContent().sections.filter((s) => s.visible)).toHaveLength(6);
   });
 });
 
@@ -79,13 +92,13 @@ describe('homeStore — migration and sanitization of stored data', () => {
   it('falls back to defaults when the stored value is malformed JSON', async () => {
     storage.setItem('taybah:homepage', '{not json');
     const home = await freshHomeStore();
-    expect(home.getHomeContent().sections).toHaveLength(7);
+    expect(home.getHomeContent().sections).toHaveLength(11);
   });
 
   it('falls back to defaults when the stored value is not an object', async () => {
     storage.setItem('taybah:homepage', JSON.stringify('just a string'));
     const home = await freshHomeStore();
-    expect(home.getHomeContent().sections).toHaveLength(7);
+    expect(home.getHomeContent().sections).toHaveLength(11);
   });
 
   it('drops an unknown section key and a duplicate of a known one', async () => {
@@ -120,14 +133,85 @@ describe('homeStore — migration and sanitization of stored data', () => {
     expect(home.getHomeContent().sections.find((s) => s.key === 'newsletter')?.visible).toBe(true);
   });
 
+  it('upgrades a pre-existing save: new sections slot under the hero, superseded ones hide', async () => {
+    storage.setItem(
+      'taybah:homepage',
+      JSON.stringify({
+        sections: [
+          { key: 'hero', visible: true },
+          { key: 'categories', visible: true },
+          { key: 'products', visible: true },
+          { key: 'brand', visible: true },
+          { key: 'newsletter', visible: true },
+        ],
+      }),
+    );
+    const home = await freshHomeStore();
+    const sections = home.getHomeContent().sections;
+    expect(sections.slice(0, 5).map((s) => s.key)).toEqual([
+      'hero',
+      'shopCategories',
+      'collections',
+      'bestSellers',
+      'story',
+    ]);
+    expect(sections.slice(0, 5).every((s) => s.visible)).toBe(true);
+    for (const key of ['categories', 'products', 'brand']) {
+      expect(sections.find((s) => s.key === key)?.visible).toBe(false);
+    }
+    expect(sections.find((s) => s.key === 'newsletter')?.visible).toBe(true);
+  });
+
+  it('does not re-hide superseded sections once the new sections are in the saved order', async () => {
+    const home1 = await freshHomeStore();
+    const sections = home1
+      .getHomeContent()
+      .sections.map((m) => (m.key === 'brand' ? { ...m, visible: true } : m));
+    home1.setHomeSections(sections);
+    const home2 = await freshHomeStore();
+    expect(home2.getHomeContent().sections.find((m) => m.key === 'brand')?.visible).toBe(true);
+  });
+
+  it('sanitizes stored homepage cards and keeps catalog references only', async () => {
+    storage.setItem(
+      'taybah:homepage',
+      JSON.stringify({
+        shopCategories: { cards: [{ slug: 'rugs', title: 5 }, { title: 'no slug' }, null] },
+        collections: { cards: 'nope' },
+        bestSellers: { productIds: ['a', 3, 'b'] },
+      }),
+    );
+    const home = await freshHomeStore();
+    const c = home.getHomeContent();
+    expect(c.shopCategories.cards).toEqual([{ slug: 'rugs', title: '', subtitle: '', image: '' }]);
+    expect(c.collections.cards.length).toBe(3); // invalid stored value -> defaults
+    expect(c.bestSellers.productIds).toEqual(['a', 'b']);
+    expect(c.story.ctaTo).toBe('/about'); // untouched section defaults survive
+  });
+
+  it('persists edited card config across a reload', async () => {
+    const home1 = await freshHomeStore();
+    home1.updateHomeSection('collections', {
+      ...home1.getHomeContent().collections,
+      cards: [{ slug: 'atelier', title: 'عنوان', description: '', image: 'local:abc' }],
+    });
+    const home2 = await freshHomeStore();
+    expect(home2.getHomeContent().collections.cards).toEqual([
+      { slug: 'atelier', title: 'عنوان', description: '', image: 'local:abc' },
+    ]);
+  });
+
   it('merges a partially-stored section onto the defaults rather than replacing it wholesale', async () => {
     storage.setItem(
       'taybah:homepage',
       JSON.stringify({ hero: { title: 'فقط العنوان تغيّر' } }),
     );
     const home = await freshHomeStore();
-    expect(home.getHomeContent().hero.title).toBe('فقط العنوان تغيّر');
-    expect(home.getHomeContent().hero.images.length).toBeGreaterThan(0); // untouched fields survive from defaults
+    const { slides } = home.getHomeContent().hero;
+    expect(slides.length).toBeGreaterThan(0);
+    expect(slides.every((s) => s.title === 'فقط العنوان تغيّر')).toBe(true); // legacy: one shared title
+    expect(slides.every((s) => s.image.length > 0)).toBe(true); // images survive from defaults
+    expect(slides[0].primaryLabel).toBe('تسوّق المجموعة'); // untouched legacy fields keep their old values
   });
 
   it('migrates a legacy single hero image into the images list', async () => {
@@ -136,14 +220,108 @@ describe('homeStore — migration and sanitization of stored data', () => {
       JSON.stringify({ hero: { image: 'local:legacy-hero' } }),
     );
     const home = await freshHomeStore();
-    expect(home.getHomeContent().hero.images).toEqual(['local:legacy-hero']);
-    expect((home.getHomeContent().hero as Record<string, unknown>).image).toBeUndefined();
+    const { slides } = home.getHomeContent().hero;
+    expect(slides.map((s) => s.image)).toEqual(['local:legacy-hero']);
+    expect((home.getHomeContent().hero as unknown as Record<string, unknown>).image).toBeUndefined();
   });
 
   it('falls back to the default slides when stored hero images are empty or invalid', async () => {
     storage.setItem('taybah:homepage', JSON.stringify({ hero: { images: [] } }));
     const home = await freshHomeStore();
-    expect(home.getHomeContent().hero.images.length).toBeGreaterThan(0);
+    expect(home.getHomeContent().hero.slides.length).toBeGreaterThan(0);
+  });
+
+  it('seeds three slides, each with its own image, copy and an existing route', async () => {
+    const home = await freshHomeStore();
+    const { slides } = home.getHomeContent().hero;
+    expect(slides.map((s) => s.primaryTo)).toEqual(['/category/rugs', '/category/furnishings', '/collections']);
+    expect(new Set(slides.map((s) => s.title)).size).toBe(3);
+    expect(new Set(slides.map((s) => s.body)).size).toBe(3);
+    expect(new Set(slides.map((s) => s.image)).size).toBe(3);
+    expect(new Set(slides.map((s) => s.id)).size).toBe(3);
+    expect(slides.every((s) => s.visible && s.secondaryLabel === '')).toBe(true);
+  });
+
+  it('editing one slide leaves the others untouched and persists across a reload', async () => {
+    const home1 = await freshHomeStore();
+    const before = home1.getHomeContent().hero.slides;
+    home1.updateHomeSection('hero', {
+      slides: before.map((s) => (s.id === 'hero-2' ? { ...s, title: 'عنوان الشريحة الثانية', visible: false } : s)),
+    });
+    const home2 = await freshHomeStore();
+    const after = home2.getHomeContent().hero.slides;
+    expect(after[1].title).toBe('عنوان الشريحة الثانية');
+    expect(after[1].visible).toBe(false);
+    expect(after[0]).toEqual(before[0]);
+    expect(after[2]).toEqual(before[2]);
+  });
+
+  it('keeps slide order, additions and removals exactly as saved', async () => {
+    const home1 = await freshHomeStore();
+    const [a, b, c] = home1.getHomeContent().hero.slides;
+    const added = { ...a, id: 'extra', title: 'شريحة جديدة', image: 'local:new' };
+    home1.updateHomeSection('hero', { slides: [c, added, a] }); // reordered, b deleted, one added
+    const home2 = await freshHomeStore();
+    expect(home2.getHomeContent().hero.slides.map((s) => s.id)).toEqual([c.id, 'extra', a.id]);
+    expect(home2.getHomeContent().hero.slides.some((s) => s.id === b.id)).toBe(false);
+  });
+
+  it('turns a legacy shared-text save into one slide per image, keeping the saved text', async () => {
+    storage.setItem(
+      'taybah:homepage',
+      JSON.stringify({
+        hero: { title: 'عنوان مخصص', body: 'وصف مخصص', images: ['local:one', 'local:two'] },
+      }),
+    );
+    const home = await freshHomeStore();
+    const { slides } = home.getHomeContent().hero;
+    expect(slides.map((s) => s.image)).toEqual(['local:one', 'local:two']);
+    expect(slides.every((s) => s.title === 'عنوان مخصص' && s.body === 'وصف مخصص')).toBe(true);
+    expect(new Set(slides.map((s) => s.id)).size).toBe(2);
+  });
+
+  it('gives an untouched legacy save the new distinct per-slide copy, keeping its images', async () => {
+    storage.setItem(
+      'taybah:homepage',
+      JSON.stringify({
+        hero: {
+          title: 'حيث تلتقي الحِرفة بالفخامة',
+          body: 'سجاد وستائر ومفروشات مختارة بعناية — قطع تحمل روح التراث وتُصمَّم لبيوت اليوم.',
+          images: ['local:a', 'local:b', 'local:c'],
+        },
+      }),
+    );
+    const home = await freshHomeStore();
+    const { slides } = home.getHomeContent().hero;
+    expect(slides.map((s) => s.image)).toEqual(['local:a', 'local:b', 'local:c']);
+    expect(new Set(slides.map((s) => s.title)).size).toBe(3);
+  });
+
+  it('sanitizes a stored slides array (bad entries dropped, duplicate ids fixed, empty -> defaults)', async () => {
+    storage.setItem(
+      'taybah:homepage',
+      JSON.stringify({
+        hero: {
+          slides: [
+            { id: 'x', image: 'local:1', title: 5, visible: false },
+            { id: 'x', image: 'local:2', title: 'ب' },
+            null,
+            'nope',
+          ],
+        },
+      }),
+    );
+    const home = await freshHomeStore();
+    const { slides } = home.getHomeContent().hero;
+    expect(slides).toHaveLength(2);
+    expect(new Set(slides.map((s) => s.id)).size).toBe(2);
+    expect(slides[0].title).toBe('');
+    expect(slides[0].visible).toBe(false);
+    expect(slides[1].title).toBe('ب');
+
+    storage.setItem('taybah:homepage', JSON.stringify({ hero: { slides: [] } }));
+    const home2 = await freshHomeStore();
+    expect(home2.getHomeContent().hero.slides).toHaveLength(3);
   });
 
   it('treats visible as true unless explicitly false (tolerates a missing/invalid flag)', async () => {

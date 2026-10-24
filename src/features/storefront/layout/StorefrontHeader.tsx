@@ -161,9 +161,9 @@ export function StorefrontHeader() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-taupe/60 bg-porcelain/95 backdrop-blur-sm">
+      <header className="sticky top-0 z-40 border-b border-taupe/60 bg-porcelain lg:bg-porcelain/95 lg:backdrop-blur-sm">
         <Container>
-          <div className="flex h-16 items-center justify-between gap-4 lg:h-24">
+          <div className="flex h-16 items-center justify-between gap-4 lg:h-20">
             <div className="flex items-center gap-1 lg:hidden">
               <IconButton label={t.menu} onClick={() => setMenuOpen(true)}>
                 <Menu className="size-5" aria-hidden="true" />
@@ -195,7 +195,7 @@ export function StorefrontHeader() {
                   </span>
                 </div>
                 <OrnamentDivider orientation="vertical" className="h-10 lg:h-12" />
-                <BrandMark className="h-12 w-auto lg:h-16" />
+                <BrandMark className="h-12 w-auto lg:h-14" />
               </div>
               <BrandMark className="h-12 w-auto sm:hidden" />
             </Link>
@@ -348,8 +348,9 @@ export function StorefrontHeader() {
         </Container>
 
         <div
-          className={`overflow-hidden border-taupe/60 bg-porcelain transition-[max-height] duration-300 lg:hidden ${
-            searchOpen ? 'max-h-96 border-b' : 'max-h-0'
+          inert={!searchOpen}
+          className={`border-taupe/60 bg-porcelain transition-[max-height] duration-300 lg:hidden ${
+            searchOpen ? 'max-h-96 overflow-visible border-b' : 'max-h-0 overflow-hidden'
           }`}
         >
           <Container className="py-4">
@@ -421,9 +422,8 @@ export function StorefrontHeader() {
               >
                 <Search className="size-4 transition-transform duration-300 group-hover/btn:scale-110" aria-hidden="true" />
               </button>
-              {/* Rendered inside this relative form (not the row's
-                  overflow-hidden/max-height wrapper) — nested there, the
-                  dropdown could get clipped once results push past the cap. */}
+              {/* Suggestions render inside this relative form. The panel wrapper is
+                  overflow-visible while open, so the list is never clipped. */}
               {suggestionList('header-search-suggestions-mobile')}
             </form>
           </Container>

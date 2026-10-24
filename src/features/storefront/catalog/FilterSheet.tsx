@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { FilterPanel, type FilterControls } from './FilterPanel';
 import type { AttributeDef } from './attributeStore';
+import type { CatalogProduct } from './catalogData';
 import { Button } from '../../shared/components/Button';
 import type { StorefrontLocale } from '../../shared/utils/locale';
 
@@ -19,6 +20,8 @@ export function FilterSheet({
   showCategory = false,
   resultCount,
   facets = [],
+  products,
+  salesAvailable = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -27,6 +30,8 @@ export function FilterSheet({
   showCategory?: boolean;
   resultCount: number;
   facets?: AttributeDef[];
+  products?: CatalogProduct[];
+  salesAvailable?: boolean;
 }) {
   const t = copy[locale];
   const panelRef = useRef<HTMLDivElement>(null);
@@ -71,7 +76,14 @@ export function FilterSheet({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-5">
-          <FilterPanel ctrl={ctrl} locale={locale} showCategory={showCategory} facets={facets} />
+          <FilterPanel
+            ctrl={ctrl}
+            locale={locale}
+            showCategory={showCategory}
+            facets={facets}
+            products={products}
+            salesAvailable={salesAvailable}
+          />
         </div>
         <div className="flex items-center gap-3 border-t border-espresso/10 px-5 py-4">
           <Button type="button" onClick={onClose} className="flex-1">

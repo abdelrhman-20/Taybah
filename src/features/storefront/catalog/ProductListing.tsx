@@ -14,9 +14,9 @@ import {
 import { type CatalogProduct } from './catalogData';
 import { useCatalog } from './catalogStore';
 import { useAttributes } from './attributeStore';
+import { getSalesCounts } from './salesData';
 import { FilterPanel } from './FilterPanel';
 import { FilterChips } from './FilterChips';
-import { SortControl } from './SortControl';
 import { FilterSheet } from './FilterSheet';
 
 const copy = {
@@ -79,7 +79,13 @@ export function ProductListing({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [limit, setLimit] = useState(PAGE_SIZE);
 
-  const results = useMemo(() => applyFilters(products, filters), [products, filters]);
+  // Real sales data, when any exists — otherwise "best selling" is hidden/falls
+  // back to the featured order (see salesData.ts).
+  const salesCounts = getSalesCounts();
+  const results = useMemo(
+    () => applyFilters(products, filters, { attrs, salesCounts }),
+    [products, filters, attrs, salesCounts],
+  );
   const filterKey = JSON.stringify(filters);
   const [appliedKey, setAppliedKey] = useState(filterKey);
   if (appliedKey !== filterKey) {
@@ -147,7 +153,6 @@ export function ProductListing({
           </button>
           <p className="text-xs tracking-wide text-espresso/55">{t.count(results.length)}</p>
         </div>
-        <SortControl value={filters.sort} onChange={ctrl.setSort} locale={locale} />
       </div>
 
       {activeCount > 0 && (
@@ -157,8 +162,16 @@ export function ProductListing({
       )}
 
       <div className="mt-8 md:flex md:items-start md:gap-10">
-        <aside className="hidden w-52 shrink-0 md:block lg:w-56">
-          <FilterPanel ctrl={ctrl} locale={locale} showCategory={showCategory} facets={facets} />
+        <aside className="hidden w-56 shrink-0 md:block lg:w-64">
+          <FilterPanel
+            ctrl={ctrl}
+            locale={locale}
+            showCategory={showCategory}
+            facets={facets}
+            products={products}
+            salesAvailable={salesCounts !== undefined}
+            showHeader
+          />
         </aside>
 
         <div className="flex-1">
@@ -214,6 +227,8 @@ export function ProductListing({
         showCategory={showCategory}
         resultCount={results.length}
         facets={facets}
+        products={products}
+        salesAvailable={salesCounts !== undefined}
       />
     </Container>
   );

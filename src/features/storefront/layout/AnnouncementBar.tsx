@@ -14,7 +14,7 @@ export function AnnouncementBar() {
 
   return (
     <div className="bg-espresso text-porcelain/85">
-      <Container className="flex h-10 items-center justify-between gap-4 text-[11px] tracking-wide">
+      <Container className="flex h-9 items-center justify-between gap-4 text-[11px] tracking-wide">
         <div className="flex items-center gap-3">
           {SOCIAL_LINKS.map(({ id, label, href, icon: Icon }) => (
             <a

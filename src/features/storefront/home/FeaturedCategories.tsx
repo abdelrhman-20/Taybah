@@ -4,6 +4,7 @@ import { ArrowRight } from 'lucide-react';
 import { useStorefrontLocale } from '../../shared/hooks/useStorefrontLocale';
 import { Container } from '../../shared/components/Container';
 import { OrnamentDivider } from '../../shared/components/OrnamentDivider';
+import { RevealItem } from '../../shared/components/Reveal';
 import { navHref } from '../layout/navData';
 import { useTransitionClick } from '../layout/useTransitionClick';
 import { emphasizeLastWord } from '../../shared/utils/emphasize';
@@ -75,7 +76,15 @@ export function FeaturedCategories({ content }: { content: HomeContent['categori
         </div>
         <div className="columns-2 gap-4 sm:columns-3 sm:gap-6 lg:columns-4">
           {list.map((category, index) => (
-            <CategoryTile key={category.slug} category={category} ratio={TILE_RATIOS[index % TILE_RATIOS.length]} />
+            <RevealItem
+              key={category.slug}
+              variant="up"
+              delay={Math.min(index, 6) * 80}
+              duration={500}
+              className="break-inside-avoid"
+            >
+              <CategoryTile category={category} ratio={TILE_RATIOS[index % TILE_RATIOS.length]} />
+            </RevealItem>
           ))}
         </div>
       </Container>

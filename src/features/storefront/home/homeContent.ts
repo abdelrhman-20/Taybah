@@ -1,13 +1,17 @@
 // TEMPORARY PRESENTATION DATA — not real store data, not connected to any
-// backend. Photography is placeholder imagery (picsum.photos, fixed seeds) used
-// only to develop the layout; replaced by real catalog imagery and data in
-// later phases. Category/product content comes from ../catalog/catalogData.ts
-// (the isolated mock catalog layer swapped for Supabase queries later).
+// backend. Photography is temporary Unsplash stock (Unsplash License) served
+// from public/images/home — see CREDITS.md there — until the client supplies
+// final approved images. Every image below is only a seed default: each one is
+// replaceable in Admin → الصفحة الرئيسية. Category/product content comes from
+// ../catalog/catalogData.ts (the isolated mock catalog layer swapped for
+// Supabase queries later).
+
+const home = (file: string) => `/images/home/${file}`;
 
 export const placeholderImages = {
-  hero: 'https://picsum.photos/seed/taybah-hero/1600/1100',
-  editorial: 'https://picsum.photos/seed/taybah-editorial/1200/900',
-  collectionA: 'https://picsum.photos/seed/taybah-collection-a/900/1200',
-  collectionB: 'https://picsum.photos/seed/taybah-collection-b/900/1200',
-  brand: 'https://picsum.photos/seed/taybah-brand/1000/1200',
+  heroSlides: [home('hero-1.jpg'), home('hero-2.jpg'), home('hero-3.jpg')],
+  editorial: home('editorial-lounge.jpg'),
+  collectionA: home('product-p02-1.jpg'),
+  collectionB: home('product-p15-1.jpg'),
+  brand: home('story-weaving.jpg'),
 };

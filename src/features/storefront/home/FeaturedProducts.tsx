@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useStorefrontLocale } from '../../shared/hooks/useStorefrontLocale';
 import { Container } from '../../shared/components/Container';
 import { OrnamentDivider } from '../../shared/components/OrnamentDivider';
+import { RevealItem } from '../../shared/components/Reveal';
 import { ProductCard } from '../components/ProductCard';
 import { emphasizeLastWord } from '../../shared/utils/emphasize';
 import { productIsPublic, useCatalog } from '../catalog/catalogStore';
@@ -102,9 +103,11 @@ export function FeaturedProducts({ content }: { content: HomeContent['products']
 
         <div className="relative">
           <ul className="grid grid-cols-2 gap-x-4 gap-y-10 sm:gap-x-6 lg:grid-cols-4">
-            {pageItems.map((product) => (
+            {pageItems.map((product, index) => (
               <li key={product.id}>
-                <ProductCard product={product} card />
+                <RevealItem variant="up" delay={index * 60} duration={400}>
+                  <ProductCard product={product} card />
+                </RevealItem>
               </li>
             ))}
           </ul>

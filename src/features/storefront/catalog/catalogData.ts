@@ -1,6 +1,8 @@
 // TEMPORARY PRESENTATION DATA — frontend-only mock catalog used to develop the
 // listing experience before Supabase integration. Photography is placeholder
-// imagery (picsum.photos, fixed seeds). Product names, prices, attributes, and
+// imagery (local Unsplash photos in public/images/home — see CREDITS.md; the
+// picsum helper below is only a fallback for products without a photo set).
+// Product names, prices, attributes, and
 // availability are invented for UI purposes; this layer is deliberately isolated
 // so a later step can swap these exports for real catalog queries without the
 // components below changing their interfaces.
@@ -28,7 +30,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'سجاد معقود يدويًا ومنسوج بأنماط تراثية ومعاصرة — قطع تُؤَسِّس الغرفة.',
       en: 'Hand-knotted and flatwoven rugs in heritage and contemporary patterns — pieces that anchor a room.',
     },
-    image: 'https://picsum.photos/seed/taybah-cat-rugs/1200/800',
+    image: '/images/home/category-rugs.jpg',
   },
   {
     slug: 'carpets',
@@ -39,7 +41,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'موكيت بخامات صوفية ومزيجة يغطي المساحات الكبيرة بدفء وثبات.',
       en: 'Wool and blended carpets covering larger spaces with warmth and weight.',
     },
-    image: 'https://picsum.photos/seed/taybah-cat-carpets/1200/800',
+    image: '/images/home/category-carpets.jpg',
   },
   {
     slug: 'curtains',
@@ -50,7 +52,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'ستائر كتان ومخمل وفوال — من الشفاف العابر إلى العازل الفاخر.',
       en: 'Linen, velvet, and voile curtains — from airy sheer to opulent blackout.',
     },
-    image: 'https://picsum.photos/seed/taybah-cat-curtains/1200/800',
+    image: '/images/home/category-curtains.jpg',
   },
   {
     slug: 'furnishings',
@@ -61,7 +63,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'أغطية وبطانيات ولُحُف تُكمِل القطع الكبيرة بلمسات ناعمة.',
       en: 'Covers, throws, and quilts that finish larger pieces with soft layers.',
     },
-    image: 'https://picsum.photos/seed/taybah-cat-furnishings/1200/800',
+    image: '/images/home/category-furnishings.jpg',
   },
   {
     slug: 'accessories',
@@ -72,7 +74,7 @@ export const catalogCategories: CatalogCategory[] = [
       ar: 'تفاصيل صغيرة تصنع الفرق — مصابيح ومزهريات وقطع حائط مختارة.',
       en: 'Small details that make the difference — lamps, vases, and wall pieces.',
     },
-    image: 'https://picsum.photos/seed/taybah-cat-accessories/1200/800',
+    image: '/images/home/category-accessories.jpg',
   },
 ];
 
@@ -99,7 +101,7 @@ export const catalogCollections: CatalogCollection[] = [
       ar: 'إيقاعٌ من الزخارف الهندسية والألوان الترابية — أصالة النمط ونظافة الخط المعاصر.',
       en: 'A rhythm of geometric motifs and earthen tones — heritage pattern with clean contemporary lines.',
     },
-    image: 'https://picsum.photos/seed/taybah-coll-diwan/1200/900',
+    image: '/images/home/collection-diwan.jpg',
   },
   {
     slug: 'heritage',
@@ -110,7 +112,7 @@ export const catalogCollections: CatalogCollection[] = [
       ar: 'قطع تحمل ذاكرة الحِرفة — ميداليات وزخارف كلاسيكية بأصالة متوارثة.',
       en: 'Pieces carrying the memory of the craft — classic medallions and inherited motifs.',
     },
-    image: 'https://picsum.photos/seed/taybah-coll-heritage/1200/900',
+    image: '/images/home/collection-heritage.jpg',
   },
   {
     slug: 'atelier',
@@ -121,7 +123,7 @@ export const catalogCollections: CatalogCollection[] = [
       ar: 'خطوط نظيفة وخامات طبيعية للبيوت المعاصرة — هدوء بلا زخرفة زائدة.',
       en: 'Clean lines and natural materials for contemporary homes — calm without ornament.',
     },
-    image: 'https://picsum.photos/seed/taybah-coll-atelier/1200/900',
+    image: '/images/home/collection-atelier.jpg',
   },
 ];
 
@@ -165,7 +167,45 @@ export const materialOptions: { key: string; label: Localized }[] = [
 // added by the admin directly, per product, via the "add a custom size"
 // control in the product form (see ProductFormPage) rather than being
 // forced into this fixed preset list.
-export const sizeOptions: { key: string; label: Localized }[] = [
+// Size / dimension values. Illustrative, product-type-appropriate dimensions for
+// the DEMO catalog — none of them is a verified manufacturer measurement, and
+// all are awaiting the client's real specifications (see
+// docs/CATALOG_SIZES_AUDIT.md). `widthCm` × `lengthCm` carry the numeric
+// dimensions where the value is a flat width × length; labels are Arabic with
+// the unit (سم) written out. Curtain values read "width × drop".
+export const sizeOptions: {
+  key: string;
+  label: Localized;
+  widthCm?: number;
+  lengthCm?: number;
+}[] = [
+  // Area rugs
+  { key: 'rug-80x150', label: { ar: '80 × 150 سم', en: '80 × 150 cm' }, widthCm: 80, lengthCm: 150 },
+  { key: 'rug-120x180', label: { ar: '120 × 180 سم', en: '120 × 180 cm' }, widthCm: 120, lengthCm: 180 },
+  { key: 'rug-160x230', label: { ar: '160 × 230 سم', en: '160 × 230 cm' }, widthCm: 160, lengthCm: 230 },
+  { key: 'rug-180x270', label: { ar: '180 × 270 سم', en: '180 × 270 cm' }, widthCm: 180, lengthCm: 270 },
+  { key: 'rug-200x300', label: { ar: '200 × 300 سم', en: '200 × 300 cm' }, widthCm: 200, lengthCm: 300 },
+  // Prayer rugs and runners
+  { key: 'prayer-70x110', label: { ar: '70 × 110 سم', en: '70 × 110 cm' }, widthCm: 70, lengthCm: 110 },
+  { key: 'runner-80x300', label: { ar: '80 × 300 سم', en: '80 × 300 cm' }, widthCm: 80, lengthCm: 300 },
+  // Curtain panels — width × drop
+  { key: 'curtain-140x250', label: { ar: 'عرض 140 × ارتفاع 250 سم', en: 'Panel 140 W × 250 H cm' }, widthCm: 140, lengthCm: 250 },
+  { key: 'curtain-140x260', label: { ar: 'عرض 140 × ارتفاع 260 سم', en: 'Panel 140 W × 260 H cm' }, widthCm: 140, lengthCm: 260 },
+  { key: 'curtain-150x270', label: { ar: 'عرض 150 × ارتفاع 270 سم', en: 'Panel 150 W × 270 H cm' }, widthCm: 150, lengthCm: 270 },
+  { key: 'curtain-150x280', label: { ar: 'عرض 150 × ارتفاع 280 سم', en: 'Panel 150 W × 280 H cm' }, widthCm: 150, lengthCm: 280 },
+  { key: 'curtain-300x260', label: { ar: 'عرض 300 × ارتفاع 260 سم', en: 'Panel 300 W × 260 H cm' }, widthCm: 300, lengthCm: 260 },
+  // Soft furnishings
+  { key: 'throw-130x170', label: { ar: '130 × 170 سم', en: '130 × 170 cm' }, widthCm: 130, lengthCm: 170 },
+  { key: 'cushion-45x45', label: { ar: '45 × 45 سم (للغطاء الواحد)', en: '45 × 45 cm (per cover)' }, widthCm: 45, lengthCm: 45 },
+  { key: 'bedspread-230x250', label: { ar: '230 × 250 سم', en: '230 × 250 cm' }, widthCm: 230, lengthCm: 250 },
+  // Accessories — fixed physical dimensions
+  { key: 'lamp-h45', label: { ar: 'ارتفاع 45 سم', en: 'Height 45 cm' } },
+  { key: 'vases-h28-20', label: { ar: 'ارتفاع 28 و20 سم', en: 'Heights 28 and 20 cm' } },
+  { key: 'wall-50x90', label: { ar: '50 × 90 سم', en: '50 × 90 cm' }, widthCm: 50, lengthCm: 90 },
+  { key: 'mirror-60x90', label: { ar: '60 × 90 سم', en: '60 × 90 cm' }, widthCm: 60, lengthCm: 90 },
+  // Retired generic labels from the first seed. Kept enabled so catalogs saved
+  // before the dimension audit still resolve their stored size keys; no seed
+  // product uses them any more (disable them in Admin once nothing does).
   { key: 'small', label: { ar: 'صغير', en: 'Small' } },
   { key: 'medium', label: { ar: 'متوسط', en: 'Medium' } },
   { key: 'large', label: { ar: 'كبير', en: 'Large' } },
@@ -173,10 +213,10 @@ export const sizeOptions: { key: string; label: Localized }[] = [
 ];
 
 export const priceBuckets: { key: string; label: Localized; min: number; max: number | null }[] = [
-  { key: 'under-1000', label: { ar: 'أقل من ١٬٠٠٠ ج.م', en: 'Under EGP 1,000' }, min: 0, max: 1000 },
-  { key: '1000-3000', label: { ar: '١٬٠٠٠ – ٣٬٠٠٠ ج.م', en: 'EGP 1,000 – 3,000' }, min: 1000, max: 3000 },
-  { key: '3000-7000', label: { ar: '٣٬٠٠٠ – ٧٬٠٠٠ ج.م', en: 'EGP 3,000 – 7,000' }, min: 3000, max: 7000 },
-  { key: 'over-7000', label: { ar: 'أكثر من ٧٬٠٠٠ ج.م', en: 'Over EGP 7,000' }, min: 7000, max: null },
+  { key: 'under-1000', label: { ar: 'أقل من 1,000 ج.م', en: 'Under EGP 1,000' }, min: 0, max: 1000 },
+  { key: '1000-3000', label: { ar: 'من 1,000 إلى أقل من 3,000 ج.م', en: 'EGP 1,000 to under 3,000' }, min: 1000, max: 3000 },
+  { key: '3000-7000', label: { ar: 'من 3,000 إلى أقل من 7,000 ج.م', en: 'EGP 3,000 to under 7,000' }, min: 3000, max: 7000 },
+  { key: 'over-7000', label: { ar: '7,000 ج.م فأكثر', en: 'EGP 7,000 and over' }, min: 7000, max: null },
 ];
 
 export type Availability = 'in_stock' | 'low_stock' | 'out_of_stock';
@@ -253,7 +293,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'سجادة بوخارا معقودة يدويًا', en: 'Bokhara Hand-Knotted Rug' },
     category: 'rugs', collection: 'diwan', price: 12450, compareAtPrice: 15800,
     availability: 'in_stock', colors: ['burgundy', 'ivory'], materials: ['wool'],
-    size: 'large', createdAt: '2025-09-14', featured: true,
+    size: 'rug-160x230', createdAt: '2025-09-14', featured: true,
     image: img('p01'), imageHover: img('p01-alt'),
   },
   {
@@ -261,7 +301,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'سجادة فارسية بميدالية زهرية', en: 'Persian Floral Medallion Rug' },
     category: 'rugs', collection: 'heritage', price: 9800, compareAtPrice: null,
     availability: 'in_stock', colors: ['navy', 'ivory'], materials: ['wool'],
-    size: 'medium', createdAt: '2025-08-02', featured: true,
+    size: 'rug-200x300', createdAt: '2025-08-02', featured: true,
     image: img('p02'), imageHover: img('p02-alt'),
   },
   {
@@ -269,7 +309,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'سجادة هندسية مسطحة النسج', en: 'Modern Geometric Flatweave Rug' },
     category: 'rugs', collection: 'atelier', price: 4250, compareAtPrice: null,
     availability: 'in_stock', colors: ['charcoal', 'sand'], materials: ['cotton'],
-    size: 'medium', createdAt: '2025-10-05', featured: false,
+    size: 'rug-160x230', createdAt: '2025-10-05', featured: false,
     image: img('p03'), imageHover: img('p03-alt'),
   },
   {
@@ -277,7 +317,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'سجادة عتقية معاد صبغها', en: 'Vintage Overdyed Rug' },
     category: 'rugs', collection: 'heritage', price: 7900, compareAtPrice: 9900,
     availability: 'low_stock', colors: ['sage', 'ivory'], materials: ['wool'],
-    size: 'large', createdAt: '2025-06-21', featured: false,
+    size: 'rug-180x270', createdAt: '2025-06-21', featured: false,
     image: img('p04'), imageHover: img('p04-alt'),
   },
   {
@@ -285,7 +325,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'سجادة جوت مضفورة طبيعية', en: 'Jute Braided Natural Rug' },
     category: 'rugs', collection: 'atelier', price: 2150, compareAtPrice: null,
     availability: 'in_stock', colors: ['sand'], materials: ['natural-fiber'],
-    size: 'small', createdAt: '2025-10-11', featured: false,
+    size: 'rug-120x180', createdAt: '2025-10-11', featured: false,
     image: img('p05'), imageHover: img('p05-alt'),
   },
   {
@@ -293,7 +333,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'سجادة صلاة بملمس حريري', en: 'Silk-Touch Prayer Rug' },
     category: 'rugs', collection: 'diwan', price: 1480, compareAtPrice: null,
     availability: 'in_stock', colors: ['burgundy', 'gold'], materials: ['silk-blend'],
-    size: 'small', createdAt: '2025-07-19', featured: false,
+    size: 'prayer-70x110', createdAt: '2025-07-19', featured: false,
     image: img('p06'), imageHover: img('p06-alt'),
   },
   {
@@ -301,7 +341,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'موكيت أكسمنستر بنقشة كلاسيكية', en: 'Axminster Patterned Carpet' },
     category: 'carpets', collection: 'heritage', price: 5600, compareAtPrice: null,
     availability: 'in_stock', colors: ['terracotta', 'ivory'], materials: ['wool-blend'],
-    size: 'xl', createdAt: '2025-05-30', featured: false,
+    size: '', createdAt: '2025-05-30', featured: false,
     image: img('p07'), imageHover: img('p07-alt'),
   },
   {
@@ -309,7 +349,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'موكيت شاج مخملي', en: 'Plush Shag Carpet' },
     category: 'carpets', collection: 'atelier', price: 3750, compareAtPrice: null,
     availability: 'in_stock', colors: ['ivory'], materials: ['synthetic'],
-    size: 'large', createdAt: '2025-09-27', featured: true,
+    size: '', createdAt: '2025-09-27', featured: true,
     image: img('p08'), imageHover: img('p08-alt'),
   },
   {
@@ -317,7 +357,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'موكيت سيزال للممرات', en: 'Sisal Runner Carpet' },
     category: 'carpets', collection: 'atelier', price: 1950, compareAtPrice: null,
     availability: 'low_stock', colors: ['sand', 'charcoal'], materials: ['natural-fiber'],
-    size: 'medium', createdAt: '2025-08-15', featured: false,
+    size: 'runner-80x300', createdAt: '2025-08-15', featured: false,
     image: img('p09'), imageHover: img('p09-alt'),
   },
   {
@@ -325,7 +365,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'موكيت ويلتون كلاسيك', en: 'Wilton Classic Carpet' },
     category: 'carpets', collection: 'diwan', price: 8200, compareAtPrice: null,
     availability: 'out_of_stock', colors: ['navy', 'burgundy'], materials: ['wool-blend'],
-    size: 'xl', createdAt: '2025-04-08', featured: false,
+    size: '', createdAt: '2025-04-08', featured: false,
     image: img('p10'), imageHover: img('p10-alt'),
   },
   {
@@ -333,7 +373,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'ستارة كتان بقصة أنيقة', en: 'Tailored Linen Curtain' },
     category: 'curtains', collection: 'atelier', price: 1290, compareAtPrice: null,
     availability: 'in_stock', colors: ['ivory'], materials: ['linen'],
-    size: 'medium', createdAt: '2025-10-02', featured: true,
+    size: 'curtain-140x260', createdAt: '2025-10-02', featured: true,
     image: img('p11'), imageHover: img('p11-alt'),
   },
   {
@@ -341,7 +381,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'ستارة مخمل عازلة للضوء', en: 'Velvet Blackout Curtain' },
     category: 'curtains', collection: 'diwan', price: 2340, compareAtPrice: 2800,
     availability: 'in_stock', colors: ['burgundy'], materials: ['velvet'],
-    size: 'large', createdAt: '2025-09-08', featured: false,
+    size: 'curtain-150x270', createdAt: '2025-09-08', featured: false,
     image: img('p12'), imageHover: img('p12-alt'),
   },
   {
@@ -349,7 +389,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'ستارة فوال شفافة', en: 'Sheer Voile Panel' },
     category: 'curtains', collection: 'atelier', price: 640, compareAtPrice: null,
     availability: 'in_stock', colors: ['ivory'], materials: ['synthetic'],
-    size: 'medium', createdAt: '2025-08-25', featured: false,
+    size: 'curtain-300x260', createdAt: '2025-08-25', featured: false,
     image: img('p13'), imageHover: img('p13-alt'),
   },
   {
@@ -357,7 +397,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'ستارة كتان مطرزة', en: 'Embroidered Linen Drape' },
     category: 'curtains', collection: 'heritage', price: 1870, compareAtPrice: null,
     availability: 'low_stock', colors: ['sage', 'ivory'], materials: ['linen'],
-    size: 'large', createdAt: '2025-07-12', featured: false,
+    size: 'curtain-140x250', createdAt: '2025-07-12', featured: false,
     image: img('p14'), imageHover: img('p14-alt'),
   },
   {
@@ -365,7 +405,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'ستارة حريرية لغرف الاستقبال', en: 'Silk-Blend Formal Curtain' },
     category: 'curtains', collection: 'diwan', price: 3150, compareAtPrice: null,
     availability: 'in_stock', colors: ['gold', 'ivory'], materials: ['silk-blend'],
-    size: 'large', createdAt: '2025-06-17', featured: false,
+    size: 'curtain-150x280', createdAt: '2025-06-17', featured: false,
     image: img('p15'), imageHover: img('p15-alt'),
   },
   {
@@ -373,7 +413,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'غطاء أريكة مخملي', en: 'Velvet Sofa Cover' },
     category: 'furnishings', collection: 'atelier', price: 980, compareAtPrice: null,
     availability: 'in_stock', colors: ['sage'], materials: ['velvet'],
-    size: 'medium', createdAt: '2025-10-09', featured: true,
+    size: '', createdAt: '2025-10-09', featured: true,
     image: img('p16'), imageHover: img('p16-alt'),
   },
   {
@@ -381,7 +421,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'بطانية منسوجة يدويًا', en: 'Handwoven Throw Blanket' },
     category: 'furnishings', collection: 'heritage', price: 720, compareAtPrice: null,
     availability: 'in_stock', colors: ['terracotta', 'ivory'], materials: ['cotton'],
-    size: 'small', createdAt: '2025-09-21', featured: false,
+    size: 'throw-130x170', createdAt: '2025-09-21', featured: false,
     image: img('p17'), imageHover: img('p17-alt'),
   },
   {
@@ -389,7 +429,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'طقم أغطية وسائد (٤ قطع)', en: 'Cushion Cover Set of 4' },
     category: 'furnishings', collection: 'diwan', price: 540, compareAtPrice: null,
     availability: 'in_stock', colors: ['burgundy', 'gold'], materials: ['velvet'],
-    size: 'small', createdAt: '2025-10-13', featured: false,
+    size: 'cushion-45x45', createdAt: '2025-10-13', featured: false,
     image: img('p18'), imageHover: img('p18-alt'),
   },
   {
@@ -397,7 +437,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'لحاف سرير مبطّن', en: 'Quilted Bedspread' },
     category: 'furnishings', collection: 'heritage', price: 1690, compareAtPrice: null,
     availability: 'low_stock', colors: ['ivory', 'sand'], materials: ['cotton'],
-    size: 'xl', createdAt: '2025-05-11', featured: false,
+    size: 'bedspread-230x250', createdAt: '2025-05-11', featured: false,
     image: img('p19'), imageHover: img('p19-alt'),
   },
   {
@@ -405,7 +445,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'مصباح طاولة نحاسي', en: 'Brass Table Lamp' },
     category: 'accessories', collection: 'atelier', price: 1120, compareAtPrice: 1400,
     availability: 'in_stock', colors: ['gold'], materials: ['metal'],
-    size: 'small', createdAt: '2025-09-30', featured: false,
+    size: 'lamp-h45', createdAt: '2025-09-30', featured: false,
     image: img('p20'), imageHover: img('p20-alt'),
   },
   {
@@ -413,7 +453,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'طقم مزهريتين خزفيتين', en: 'Ceramic Vase Duo' },
     category: 'accessories', collection: 'atelier', price: 460, compareAtPrice: null,
     availability: 'in_stock', colors: ['ivory', 'terracotta'], materials: ['ceramic'],
-    size: 'small', createdAt: '2025-10-07', featured: false,
+    size: 'vases-h28-20', createdAt: '2025-10-07', featured: false,
     image: img('p21'), imageHover: img('p21-alt'),
   },
   {
@@ -421,7 +461,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'معلقة حائط منسوجة', en: 'Woven Wall Hanging' },
     category: 'accessories', collection: 'heritage', price: 890, compareAtPrice: null,
     availability: 'in_stock', colors: ['sand', 'charcoal'], materials: ['cotton'],
-    size: 'medium', createdAt: '2025-08-19', featured: false,
+    size: 'wall-50x90', createdAt: '2025-08-19', featured: false,
     image: img('p22'), imageHover: img('p22-alt'),
   },
   {
@@ -429,7 +469,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'مرآة بإطار منحوت', en: 'Mirror with Carved Frame' },
     category: 'accessories', collection: 'diwan', price: 2450, compareAtPrice: null,
     availability: 'out_of_stock', colors: ['gold'], materials: ['wood'],
-    size: 'medium', createdAt: '2025-04-26', featured: false,
+    size: 'mirror-60x90', createdAt: '2025-04-26', featured: false,
     image: img('p23'), imageHover: img('p23-alt'),
   },
   {
@@ -437,7 +477,7 @@ const rawProducts: RawProduct[] = [
     name: { ar: 'طقم شموع معطرة (٣ قطع)', en: 'Scented Candle Trio' },
     category: 'accessories', collection: 'atelier', price: 380, compareAtPrice: null,
     availability: 'in_stock', colors: ['ivory'], materials: ['synthetic'],
-    size: 'small', createdAt: '2025-10-15', featured: true,
+    size: '', createdAt: '2025-10-15', featured: true,
     image: img('p24'), imageHover: img('p24-alt'),
   },
 ];
@@ -446,23 +486,43 @@ const rawProducts: RawProduct[] = [
 // bilingual descriptions added for the PDP UI. Replaced by real columns
 // (products.sku, product_images, variant options) when Supabase lands.
 
+// Sizes per product. One entry = a fixed dimension shown as a specification (no
+// selector). Several entries only where real variants exist (p03). Empty =
+// dimension not set: the selling model or the real measurements are not known
+// yet (fitted carpet sold by roll/area, sofa cover by sofa, candle set).
 const sizeOptionsPerProduct: Record<string, string[]> = {
-  p01: ['medium', 'large'],
-  p02: ['small', 'medium', 'large'],
-  p03: ['small', 'medium', 'large'],
-  p04: ['medium', 'large'],
-  p05: ['small', 'medium'],
-  p07: ['large', 'xl'],
-  p08: ['medium', 'large', 'xl'],
-  p09: ['small', 'medium'],
-  p10: ['large', 'xl'],
-  p11: ['medium', 'large'],
-  p12: ['medium', 'large', 'xl'],
-  p13: ['medium', 'large'],
-  p14: ['medium', 'large'],
-  p15: ['large', 'xl'],
-  p16: ['medium', 'large'],
-  p19: ['large', 'xl'],
+  p01: ['rug-160x230'],
+  p02: ['rug-200x300'],
+  p03: ['rug-120x180', 'rug-160x230', 'rug-200x300'],
+  p04: ['rug-180x270'],
+  p05: ['rug-120x180'],
+  p06: ['prayer-70x110'],
+  p07: [],
+  p08: [],
+  p09: ['runner-80x300'],
+  p10: [],
+  p11: ['curtain-140x260'],
+  p12: ['curtain-150x270'],
+  p13: ['curtain-300x260'],
+  p14: ['curtain-140x250'],
+  p15: ['curtain-150x280'],
+  p16: [],
+  p17: ['throw-130x170'],
+  p18: ['cushion-45x45'],
+  p19: ['bedspread-230x250'],
+  p20: ['lamp-h45'],
+  p21: ['vases-h28-20'],
+  p22: ['wall-50x90'],
+  p23: ['mirror-60x90'],
+  p24: [],
+};
+
+// DEMO variants: the flatweave rug is the one product with selectable sizes.
+// Per-size price and stock are NOT known, so every variant inherits the
+// product's price and availability (`price: null`, `stockQuantity: null`) —
+// real per-size prices/stock are awaiting the client.
+const demoSizeVariants: Record<string, string[]> = {
+  p03: ['rug-120x180', 'rug-160x230', 'rug-200x300'],
 };
 
 const productDescriptions: Record<string, Localized> = {
@@ -492,15 +552,71 @@ const productDescriptions: Record<string, Localized> = {
   p24: { ar: 'ثلاث شموع معطرة بروائح دافئة في أوعية زجاجية قابلة لإعادة الاستخدام.', en: 'Three scented candles in reusable glass vessels with warm fragrance notes.' },
 };
 
-export const catalogProducts: CatalogProduct[] = rawProducts.map((p) => ({
-  ...p,
-  sku: `TYB-${p.id.toUpperCase()}`,
-  sizes: sizeOptionsPerProduct[p.id] ?? [p.size],
-  images: [p.image, p.imageHover, img(`${p.id}-b`), img(`${p.id}-c`)],
-  description: productDescriptions[p.id] ?? p.name,
-  published: true,
-  isNew: p.createdAt >= '2025-10-01',
-}));
+// Temporary stock photography (Unsplash License — see public/images/home/CREDITS.md)
+// until the client supplies final product photography. Each entry is the
+// product's gallery in display order (first = main image, second = hover
+// image). Applies to seed products only; products edited in Admin keep
+// whatever images they were saved with.
+const seedPhotos: Record<string, string[]> = {
+  p01: ['p01-1', 'p01-2', 'p01-3', 'p01-4'],
+  p02: ['p02-1', 'p02-2', 'p02-3', 'p02-4'],
+  p03: ['p03-1', 'p03-2', 'p03-3', 'p03-4'],
+  p04: ['p04-1', 'p04-2', 'p04-3'],
+  p05: ['p05-1', 'p05-2', 'p05-3', 'p05-4'],
+  p06: ['p06-1', 'p06-2', 'p06-3', 'p06-4'],
+  p07: ['p07-1', 'p07-2', 'p07-3'],
+  p08: ['p08-1', 'p08-2', 'p08-3'],
+  p09: ['p09-1', 'p09-2', 'p09-3'],
+  p10: ['p10-1', 'p10-2', 'p10-3'],
+  p11: ['p11-1', 'p11-2', 'p11-3'],
+  p12: ['p12-1', 'p12-2', 'p12-3'],
+  p13: ['p13-1', 'p13-2', 'p13-3'],
+  p14: ['p14-1', 'p14-2', 'p14-3'],
+  p15: ['p15-1', 'p15-2'],
+  p16: ['p16-1', 'p16-2', 'p16-3'],
+  p17: ['p17-1', 'p17-2', 'p17-3', 'p17-4'],
+  p18: ['p18-1', 'p18-2', 'p18-3', 'p18-4'],
+  p19: ['p19-1', 'p19-2', 'p19-3', 'p19-4'],
+  p20: ['p20-1', 'p20-2'],
+  p21: ['p21-1', 'p21-2', 'p21-3', 'p21-4'],
+  p22: ['p22-1', 'p22-2', 'p22-3'],
+  p23: ['p23-1', 'p23-2', 'p23-3', 'p23-4'],
+  p24: ['p24-1', 'p24-2', 'p24-3'],
+};
+
+const seedPhotoUrl = (key: string) => `/images/home/product-${key}.jpg`;
+
+export const catalogProducts: CatalogProduct[] = rawProducts.map((raw) => {
+  const photos = seedPhotos[raw.id]?.map(seedPhotoUrl);
+  const p = photos ? { ...raw, image: photos[0], imageHover: photos[1] ?? photos[0] } : raw;
+  const variantSizes = demoSizeVariants[p.id];
+  const variantFields: Pick<CatalogProduct, 'variantAxes' | 'variants'> = variantSizes
+    ? {
+        variantAxes: ['size'],
+        variants: variantSizes.map((key) => ({
+          id: `${p.id}-v-${key}`,
+          sku: `TYB-${p.id.toUpperCase()}-${key.replace(/^[a-z]+-/, '').toUpperCase()}`,
+          combo: { size: key },
+          price: null,
+          compareAtPrice: null,
+          availability: p.availability,
+          stockQuantity: null,
+          image: null,
+          active: true,
+        })),
+      }
+    : {};
+  return {
+    ...p,
+    ...variantFields,
+    sku: `TYB-${p.id.toUpperCase()}`,
+    sizes: sizeOptionsPerProduct[p.id] ?? [p.size],
+    images: photos ?? [p.image, p.imageHover, img(`${p.id}-b`), img(`${p.id}-c`)],
+    description: productDescriptions[p.id] ?? p.name,
+    published: true,
+    isNew: p.createdAt >= '2025-10-01',
+  };
+});
 
 export function productBySlug(slug: string | undefined): CatalogProduct | undefined {
   return catalogProducts.find((p) => p.slug === slug);

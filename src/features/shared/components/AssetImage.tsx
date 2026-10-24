@@ -1,4 +1,4 @@
-import type { ImgHTMLAttributes } from 'react';
+import { useState, type ImgHTMLAttributes } from 'react';
 import { useImageUrl } from '../assets/imageStore';
 
 // Drop-in <img> replacement for any image that may hold a local asset
@@ -12,7 +12,10 @@ export function AssetImage({
   ...rest
 }: ImgHTMLAttributes<HTMLImageElement>) {
   const url = useImageUrl(src);
-  if (!url) {
+  // A URL that fails to load falls back to the same neutral block as a missing
+  // image, instead of a broken-image icon. Resets when `src` changes.
+  const [failedUrl, setFailedUrl] = useState('');
+  if (!url || failedUrl === url) {
     return (
       <span
         role="img"
@@ -21,5 +24,16 @@ export function AssetImage({
       />
     );
   }
-  return <img src={url} alt={alt} className={className} {...rest} />;
+  return (
+    <img
+      src={url}
+      alt={alt}
+      className={className}
+      {...rest}
+      onError={(e) => {
+        setFailedUrl(url);
+        rest.onError?.(e);
+      }}
+    />
+  );
 }

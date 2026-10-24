@@ -31,11 +31,18 @@ export function imageReferences(assetId: string): string[] {
   }
 
   const home = getHomeContent();
-  if ((home.hero.images ?? []).includes(ref)) uses.push('الصفحة الرئيسية: قسم البطل');
+  if (home.hero.slides.some((s) => s.image === ref)) uses.push('الصفحة الرئيسية: قسم البطل');
   if (home.brand.image === ref) uses.push('الصفحة الرئيسية: تعريف العلامة');
   if (home.editorial.image === ref) uses.push('الصفحة الرئيسية: البانر التحريري');
   if (home.collection.image1 === ref || home.collection.image2 === ref)
     uses.push('الصفحة الرئيسية: المجموعة المميزة');
+
+  if (home.newsletter.image === ref) uses.push('الصفحة الرئيسية: النشرة البريدية');
+  if (home.story.image === ref) uses.push('الصفحة الرئيسية: حكاية طيبة');
+  if (home.shopCategories.cards.some((c) => c.image === ref))
+    uses.push('الصفحة الرئيسية: تسوّق حسب القسم');
+  if (home.collections.cards.some((c) => c.image === ref))
+    uses.push('الصفحة الرئيسية: المجموعات');
 
   for (const o of getOrders()) {
     if (o.lines.some((l) => l.image === ref)) uses.push(`طلب: ${o.ref}`);

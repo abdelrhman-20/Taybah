@@ -1,5 +1,33 @@
 @import 'tailwindcss';
 
+/* Cairo (SIL Open Font License) — self-hosted variable font, weights 300–900,
+   split into the same unicode-range subsets Google Fonts serves so the
+   browser only downloads the Arabic file for Arabic pages. */
+@font-face {
+  font-family: 'Cairo';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('/fonts/cairo/cairo-arabic.woff2') format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-0891, U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41, U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
+}
+@font-face {
+  font-family: 'Cairo';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('/fonts/cairo/cairo-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Cairo';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('/fonts/cairo/cairo-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @theme {
   --color-porcelain: #f7f5f0;
   --color-burgundy: #681d20;
@@ -9,8 +37,10 @@
 
   /* Arabic is the default locale (§2.2) — base fonts target Arabic script;
      [dir="ltr"] below swaps in the Latin pairing. */
-  --font-sans: 'IBM Plex Sans Arabic', 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Amiri', 'Fraunces', Georgia, serif;
+  --font-sans: 'Cairo', 'Segoe UI', Tahoma, ui-sans-serif, system-ui, sans-serif;
+  /* One family for everything — hierarchy comes from weight, not a second
+     typeface. Headings use .font-display (weight 700, see below). */
+  --font-display: 'Cairo', 'Segoe UI', Tahoma, ui-sans-serif, system-ui, sans-serif;
 }
 
 html[dir='ltr'] {
@@ -31,6 +61,27 @@ body {
    component inherits it without per-component overrides. */
 html[dir='rtl'] body {
   line-height: 1.75;
+  font-weight: 400;
+}
+
+/* Weight hierarchy: 400 body · 500–600 nav/labels/product names (utilities) ·
+   700 headings. Tailwind's preflight makes headings inherit the body weight,
+   so set it back here; `.font-display` (the heading family utility) carries
+   the same weight so non-<h*> display text matches. Both sit in lower layers
+   than utilities, so an explicit font-medium/semibold/extrabold still wins. */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 700;
+  }
+}
+
+@layer components {
+  .font-display {
+    font-weight: 700;
+  }
 }
 
 ::selection {
@@ -58,124 +109,6 @@ html[dir='rtl'] body {
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up {
     animation: none;
-  }
-}
-
-/* Floating radial social menu — one trigger circle at rest; on hover,
-   keyboard focus, or a tap (the `.is-open` class, toggled in
-   SocialSidebar.tsx for touch devices with no hover), the whole cluster
-   shifts right and the platform icons fan out around the trigger on a
-   circle (each icon's offset set per-link via --tx/--ty custom properties,
-   computed in the component). All movement is `transform: translate(...)`,
-   which is physical, not logical, so none of it needs an RTL-direction
-   workaround the way width/margin-based layouts would. */
-.social-radial {
-  /* translateY(-50%) does the vertical centering against `top: 50%` (set
-     via Tailwind's top-1/2) — kept in this same transform, not a separate
-     Tailwind -translate-y-1/2 utility, since both rules below also set
-     `transform` and only one declaration of that property can win. */
-  transform: translateY(-50%) translateX(0);
-  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.social-radial:focus-within,
-.social-radial.is-open {
-  transform: translateY(-50%) translateX(92px);
-}
-
-.social-radial-stage {
-  position: relative;
-  width: 3.25rem;
-  height: 3.25rem;
-}
-
-.social-radial-trigger {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 999px;
-  /* Always deep burgundy — the main button, not just on hover like the
-     bronze item circles below. */
-  background-color: #70272b;
-  color: #ffffff;
-  cursor: pointer;
-  box-shadow: 0 8px 20px -8px rgb(41 34 30 / 0.45);
-  transform: scale(1);
-  transition: width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), height 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
-    transform 0.25s ease, box-shadow 0.25s ease;
-}
-
-.social-radial:focus-within .social-radial-trigger,
-.social-radial.is-open .social-radial-trigger {
-  width: 3.25rem;
-  height: 3.25rem;
-}
-
-.social-radial-trigger:hover,
-.social-radial-trigger:focus-visible {
-  transform: scale(1.06);
-  box-shadow: 0 12px 26px -8px rgb(41 34 30 / 0.55);
-}
-
-.social-radial-item {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  margin: -1.125rem 0 0 -1.125rem;
-  border-radius: 999px;
-  border: 1px solid rgb(248 244 238 / 0.3);
-  /* Muted bronze at rest, deepening to burgundy on hover — see
-     .social-radial-item:hover below. Icon stays warm ivory in both states. */
-  background-color: #806044;
-  color: #f8f4ee;
-  opacity: 0;
-  box-shadow: 0 0 0 0 rgb(41 34 30 / 0);
-  transform: translate(0, 0) scale(0.4);
-  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease, background-color 0.25s ease,
-    color 0.25s ease, box-shadow 0.25s ease;
-}
-
-.social-radial:focus-within .social-radial-item,
-.social-radial.is-open .social-radial-item {
-  opacity: 1;
-  transform: translate(var(--tx), var(--ty)) scale(1);
-}
-
-/* Hover/focus scales the item up slightly WITHOUT losing its radial
-   position — these selectors (more specific than the open-state rule
-   above) keep the same translate(--tx, --ty) and only change the scale
-   factor, so the icon grows in place on its own spot on the circle. */
-.social-radial:focus-within .social-radial-item:hover,
-.social-radial:focus-within .social-radial-item:focus-visible,
-.social-radial.is-open .social-radial-item:hover,
-.social-radial.is-open .social-radial-item:focus-visible {
-  transform: translate(var(--tx), var(--ty)) scale(1.1);
-}
-
-.social-radial-item:hover,
-.social-radial-item:focus-visible {
-  background-color: #50191d;
-  color: #ffffff;
-  box-shadow: 0 6px 16px -6px rgb(41 34 30 / 0.5);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .social-radial,
-  .social-radial-trigger,
-  .social-radial-item {
-    transition: none;
   }
 }
 

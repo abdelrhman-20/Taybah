@@ -681,15 +681,78 @@ beforeEach(() => {
 });
 
 describe('catalog store migration', () => {
-  it('keeps seeded simple products valid and variant-free', async () => {
+  it('keeps seeded products valid; only the demo flatweave rug has (size) variants', async () => {
     const store = await freshModule<typeof import('./catalogStore')>('./catalogStore.ts');
+    const attrStore = await freshModule<typeof import('./attributeStore')>('./attributeStore.ts');
     const state = store.getCatalog();
     expect(state.products.length).toBe(catalogProducts.length);
     for (const p of state.products) {
-      expect(p.variants).toBeUndefined();
-      expect(p.variantAxes).toBeUndefined();
-      expect(validateProductVariants(p, ATTRS, state.products)).toEqual([]);
+      if (p.id === 'p03') {
+        expect(p.variantAxes).toEqual(['size']);
+        expect(p.variants).toHaveLength(3);
+      } else {
+        expect(p.variants).toBeUndefined();
+        expect(p.variantAxes).toBeUndefined();
+      }
+      expect(validateProductVariants(p, attrStore.getAttributes(), state.products)).toEqual([]);
     }
+  });
+
+  it('seed sizes: every size key resolves, units are cm, and no generic size pattern is shared', async () => {
+    const attrStore = await freshModule<typeof import('./attributeStore')>('./attributeStore.ts');
+    const sizeAttr = attrStore.getAttributes().find((a) => a.key === 'size');
+    const known = new Map((sizeAttr?.values ?? []).map((v) => [v.key, v]));
+    const GENERIC = ['small', 'medium', 'large', 'xl'];
+    for (const p of catalogProducts) {
+      for (const key of p.sizes) {
+        expect(known.has(key), `${p.id} ${key}`).toBe(true);
+        expect(GENERIC.includes(key), `${p.id} still uses a generic label`).toBe(false);
+        expect(known.get(key)?.label.ar, key).toMatch(/سم/);
+      }
+      // default size is one of the product's sizes (or both are empty)
+      expect(p.sizes.includes(p.size) || (p.size === '' && p.sizes.length === 0), p.id).toBe(true);
+    }
+    // not one repeated size pattern across unrelated product types
+    const byCategory = (cat: string) => new Set(catalogProducts.filter((p) => p.category === cat).flatMap((p) => p.sizes));
+    const rugs = byCategory('rugs');
+    for (const other of ['curtains', 'furnishings', 'accessories']) {
+      for (const k of byCategory(other)) expect(rugs.has(k), `${other} reuses a rug size ${k}`).toBe(false);
+    }
+  });
+
+  it('keeps dimensions unset where they are not known (fitted carpets, sofa cover, candle set)', () => {
+    for (const id of ['p07', 'p08', 'p10', 'p16', 'p24']) {
+      const p = catalogProducts.find((x) => x.id === id)!;
+      expect(p.sizes, id).toEqual([]);
+      expect(p.size, id).toBe('');
+    }
+  });
+
+  it('demo size variants inherit price and availability — nothing invented', () => {
+    const p = catalogProducts.find((x) => x.id === 'p03')!;
+    for (const v of p.variants ?? []) {
+      expect(v.price).toBeNull();
+      expect(v.compareAtPrice).toBeNull();
+      expect(v.stockQuantity).toBeNull();
+      expect(v.availability).toBe(p.availability);
+    }
+    expect(new Set((p.variants ?? []).map((v) => v.sku)).size).toBe(3);
+  });
+
+  it('a saved size attribute gains missing seeded values without losing its own edits', async () => {
+    storage.setItem(
+      'taybah:attributes',
+      JSON.stringify([
+        { key: 'size', name: { ar: 'المقاس', en: 'Size' }, display: 'chips', categories: [], required: false, variationCapable: true, filterable: false, enabled: true, order: 1,
+          values: [{ key: 'small', label: { ar: 'صغير جدًا (معدّل)', en: '' }, enabled: false, order: 1 }] },
+      ]),
+    );
+    const attrStore = await freshModule<typeof import('./attributeStore')>('./attributeStore.ts');
+    const size = attrStore.getAttributes().find((a) => a.key === 'size')!;
+    const small = size.values.find((v) => v.key === 'small')!;
+    expect(small.label.ar).toBe('صغير جدًا (معدّل)');
+    expect(small.enabled).toBe(false);
+    expect(size.values.some((v) => v.key === 'rug-160x230')).toBe(true);
   });
 
   it('survives a localStorage reload with variant data intact', async () => {

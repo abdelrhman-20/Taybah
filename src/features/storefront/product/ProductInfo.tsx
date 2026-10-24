@@ -8,7 +8,6 @@ import {
   attributeValueLabel,
   enabledValues,
   useAttributes,
-  visibleAssignedValues,
 } from '../catalog/attributeStore';
 import { useCatalog } from '../catalog/catalogStore';
 import {
@@ -28,6 +27,7 @@ import { useCart } from '../cart/useCart';
 import { formatPrice } from '../../shared/utils/format';
 import { navHref } from '../layout/navData';
 import { QuantityStepper } from './QuantityStepper';
+import { ColorSwatches } from './ColorSwatches';
 import type { StorefrontLocale } from '../../shared/utils/locale';
 
 const copy = {
@@ -39,6 +39,7 @@ const copy = {
     collection: 'المجموعة',
     chooseColor: 'اختر اللون',
     chooseSize: 'اختر المقاس',
+    quantity: 'الكمية',
     add: 'أضف إلى السلة',
     outOfStock: 'نفدت الكمية',
     inStock: 'متوفر',
@@ -63,6 +64,7 @@ const copy = {
     collection: 'Collection',
     chooseColor: 'Select a color',
     chooseSize: 'Select a size',
+    quantity: 'Quantity',
     add: 'Add to cart',
     outOfStock: 'Out of stock',
     inStock: 'In stock',
@@ -151,7 +153,6 @@ export function ProductInfo({
 
   const catalog = useCatalog();
   const category = catalog.categories.find((c) => c.slug === product.category);
-  const selectedColor = color ? colorOpts.find((c) => c.key === color) : null;
 
   const axisName = (axis: string) => attributeByKey(axis)?.name[locale] ?? axis;
 
@@ -165,10 +166,13 @@ export function ProductInfo({
           {category.name[locale]}
         </Link>
       )}
-      <h1 className="mt-2 font-display text-3xl text-espresso sm:text-4xl">{product.name[locale]}</h1>
+      <h1 className="mt-2 font-display text-[1.9rem] leading-snug text-espresso sm:text-4xl">{product.name[locale]}</h1>
+      {product.description[locale] && (
+        <p className="mt-3 max-w-xl text-sm leading-7 text-espresso/70 sm:text-base">{product.description[locale]}</p>
+      )}
 
-      <div className="mt-4 flex flex-wrap items-baseline gap-3">
-        <span className={`font-display text-2xl font-medium ${discount ? 'text-burgundy' : 'text-espresso'}`}>
+      <div className="mt-5 flex flex-wrap items-baseline gap-3">
+        <span className={`font-display text-3xl ${discount ? 'text-burgundy' : 'text-espresso'}`}>
           {formatPrice(effPrice, locale)}
         </span>
         {effCompareAt && (
@@ -177,7 +181,7 @@ export function ProductInfo({
           </span>
         )}
         {discount && (
-          <span className="bg-burgundy/10 px-2 py-0.5 text-xs font-semibold text-burgundy">
+          <span className="rounded-full bg-burgundy/10 px-3 py-0.5 text-xs font-semibold text-burgundy">
             {discount}% {t.discount}
           </span>
         )}
@@ -215,8 +219,6 @@ export function ProductInfo({
               : t.inStock}
       </p>
 
-      <p className="mt-5 max-w-xl text-sm leading-7 text-espresso/70">{product.description[locale]}</p>
-
       {/* Variant selectors — one control per configured axis, values sourced
           from stored variant combos and filtered progressively so impossible
           combinations can never be picked. */}
@@ -225,10 +227,30 @@ export function ProductInfo({
           const attr = attributeByKey(axis);
           const chosen = sel[axis] ?? null;
           const options = offeredAxisValues(product, axis, attrs);
+          // The colour axis always renders as visual swatches (never text chips),
+          // whatever display style the attribute is configured with.
+          if (axis === 'color') {
+            return (
+              <ColorSwatches
+                key={axis}
+                className="mt-7"
+                label={axisName(axis)}
+                options={options.map((value) => ({
+                  key: value,
+                  label: attributeValueLabel(axis, value, locale) ?? value,
+                  hex: attributeValueHex(axis, value),
+                  disabled: !axisValueEnabled(product, sel, axis, value),
+                }))}
+                selected={chosen}
+                onSelect={(value) => onSelectAxis?.(axis, value)}
+                emptyText={t.comboUnavailable}
+              />
+            );
+          }
           const swatch = attr?.display === 'swatch';
           return (
             <div key={axis} className={swatch ? 'mt-7' : 'mt-6'}>
-              <p className="mb-2.5 text-sm font-medium text-espresso">
+              <p className="mb-2.5 text-base font-semibold text-espresso">
                 {axisName(axis)}
                 {chosen && (
                   <span className="ms-2 font-normal text-espresso/55">
@@ -267,7 +289,7 @@ export function ProductInfo({
                       disabled={!enabled}
                       onClick={() => onSelectAxis?.(axis, value)}
                       aria-pressed={on}
-                      className={`border px-4 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold disabled:cursor-not-allowed disabled:opacity-35 disabled:line-through ${
+                      className={`min-w-[5.5rem] rounded-sm border px-4 py-2.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold disabled:cursor-not-allowed disabled:opacity-35 disabled:line-through ${
                         on
                           ? 'border-burgundy bg-burgundy text-white'
                           : 'border-espresso/20 text-espresso/75 hover:border-espresso/50'
@@ -286,38 +308,19 @@ export function ProductInfo({
         })}
 
       {/* Legacy simple-product selectors — unchanged for non-variant items. */}
-      {needsColor && (
-        <div className="mt-7">
-          <p className="mb-2.5 text-sm font-medium text-espresso">
-            {t.color}
-            {selectedColor && <span className="ms-2 font-normal text-espresso/55">{selectedColor.label[locale]}</span>}
-          </p>
-          <div className="flex flex-wrap gap-2.5">
-            {colorOpts.map((o) => {
-              const key = o.key;
-              const on = color === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setColor(key)}
-                  aria-pressed={on}
-                  aria-label={`${t.color}: ${o.label[locale]}`}
-                  title={o.label[locale]}
-                  className={`size-9 rounded-full border-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
-                    on ? 'border-burgundy ring-2 ring-burgundy/25' : 'border-espresso/15 hover:border-espresso/40'
-                  }`}
-                  style={{ backgroundColor: o.hex }}
-                />
-              );
-            })}
-          </div>
-        </div>
+      {!isVariant && colorOpts.length > 0 && (
+        <ColorSwatches
+          className="mt-7"
+          label={t.color}
+          options={colorOpts.map((o) => ({ key: o.key, label: o.label[locale], hex: o.hex }))}
+          selected={color}
+          onSelect={needsColor ? setColor : undefined}
+        />
       )}
 
       {needsSize && (
         <div className="mt-6">
-          <p className="mb-2.5 text-sm font-medium text-espresso">
+          <p className="mb-2.5 text-base font-semibold text-espresso">
             {t.size}
             {size && <span className="ms-2 font-normal text-espresso/55">{attributeValueLabel('size', size, locale)}</span>}
           </p>
@@ -331,7 +334,7 @@ export function ProductInfo({
                   type="button"
                   onClick={() => setSize(key)}
                   aria-pressed={on}
-                  className={`border px-4 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
+                  className={`min-w-[5.5rem] rounded-sm border px-4 py-2.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
                     on
                       ? 'border-burgundy bg-burgundy text-white'
                       : 'border-espresso/20 text-espresso/75 hover:border-espresso/50'
@@ -345,8 +348,11 @@ export function ProductInfo({
         </div>
       )}
 
-      <div className="mt-8 flex flex-wrap items-center gap-3">
+      <div className="mt-8">
+        <p className="mb-2.5 text-base font-semibold text-espresso">{t.quantity}</p>
         <QuantityStepper value={qty} onChange={setQty} locale={locale} />
+      </div>
+      <div className="mt-5 flex items-center gap-3">
         <button
           type="button"
           disabled={!canAdd}
@@ -356,7 +362,7 @@ export function ProductInfo({
             else cart.add(product, { color, size }, qty);
             setAnnouncement(t.addedToCart);
           }}
-          className="inline-flex flex-1 items-center justify-center gap-2 rounded-[27px] bg-burgundy px-8 py-3 text-sm font-medium tracking-wide text-white transition hover:bg-burgundy/90 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold sm:flex-none sm:min-w-52"
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-burgundy px-8 py-3.5 text-base font-semibold tracking-wide text-white shadow-[0_10px_24px_-12px_rgba(104,29,32,0.6)] transition hover:bg-burgundy/90 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2"
         >
           <ShoppingBag className="size-4" aria-hidden />
           {out ? t.outOfStock : t.add}
@@ -370,7 +376,7 @@ export function ProductInfo({
           aria-pressed={wishlisted}
           aria-label={wishlisted ? t.wishlistRemove : t.wishlistAdd}
           title={wishlisted ? t.wishlistRemove : t.wishlistAdd}
-          className={`inline-flex size-11 items-center justify-center border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
+          className={`inline-flex size-[3.25rem] shrink-0 items-center justify-center rounded-md border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
             wishlisted
               ? 'border-burgundy bg-burgundy text-white'
               : 'border-espresso/25 text-espresso/70 hover:border-burgundy hover:text-burgundy'
@@ -395,30 +401,10 @@ export function ProductInfo({
         </p>
       ) : null}
 
-      <dl className="mt-9 space-y-2.5 border-t border-espresso/10 pt-6 text-sm">
+      <dl className="mt-7 border-t border-espresso/10 pt-4 text-sm">
         <div className="flex gap-3">
-          <dt className="w-24 shrink-0 text-espresso/50">{t.sku}</dt>
+          <dt className="shrink-0 text-espresso/50">{t.sku}</dt>
           <dd className="text-espresso" dir="ltr">{resolved?.sku ?? product.sku}</dd>
-        </div>
-        <div className="flex gap-3">
-          <dt className="w-24 shrink-0 text-espresso/50">{t.material}</dt>
-          <dd className="text-espresso">
-            {visibleAssignedValues('material', product.materials)
-              .map((m) => attributeValueLabel('material', m, locale))
-              .filter(Boolean)
-              .join(' · ')}
-          </dd>
-        </div>
-        <div className="flex gap-3">
-          <dt className="w-24 shrink-0 text-espresso/50">{t.collection}</dt>
-          <dd className="text-espresso">
-            <Link
-              to={navHref(locale, `/collection/${product.collection}`)}
-              className="transition hover:text-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
-            >
-              {catalog.collections.find((c) => c.slug === product.collection)?.name[locale] ?? product.collection}
-            </Link>
-          </dd>
         </div>
       </dl>
       <p role="status" aria-live="polite" className="sr-only">

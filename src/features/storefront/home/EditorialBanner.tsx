@@ -1,4 +1,5 @@
 import { AssetImage } from '../../shared/components/AssetImage';
+import { RevealItem } from '../../shared/components/Reveal';
 import { useStorefrontLocale } from '../../shared/hooks/useStorefrontLocale';
 import { ButtonLink } from '../../shared/components/Button';
 import { navHref } from '../layout/navData';
@@ -9,8 +10,12 @@ export function EditorialBanner({ content }: { content: HomeContent['editorial']
   const locale = useStorefrontLocale();
   return (
     <section aria-labelledby="editorial-banner">
-      <div className="grid lg:grid-cols-2">
-        <div className="bg-espresso px-6 py-14 text-porcelain sm:px-10 lg:px-16 lg:py-24">
+      <div className="grid overflow-hidden lg:grid-cols-2">
+        <RevealItem
+          variant="start"
+          duration={550}
+          className="bg-espresso px-6 py-14 text-porcelain sm:px-10 lg:px-16 lg:py-24"
+        >
           <div className="mx-auto max-w-md lg:ms-auto lg:me-0">
             <p className="mb-4 flex items-center gap-2.5 text-[11px] font-semibold tracking-[0.3em] text-gold uppercase">
               <span className="h-px w-5 bg-gold" aria-hidden="true" />
@@ -36,7 +41,7 @@ export function EditorialBanner({ content }: { content: HomeContent['editorial']
               </ButtonLink>
             </div>
           </div>
-        </div>
+        </RevealItem>
         <AssetImage
           src={content.image}
           alt="مجموعة طيبة التحريرية"

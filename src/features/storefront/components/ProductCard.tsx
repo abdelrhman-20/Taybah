@@ -30,6 +30,7 @@ const toolbarCopy = {
 export function ProductCard({
   product,
   card = false,
+  compact = false,
 }: {
   product: CatalogProduct;
   // Wraps the image + info in one unified white bordered card instead of
@@ -37,6 +38,9 @@ export function ProductCard({
   // surface (currently just FeaturedProducts' "تشكيل لأفضل منتجاتنا") so
   // every other product grid keeps its existing appearance untouched.
   card?: boolean;
+  // Homepage best-sellers layout (implies `card`): landscape image, no
+  // on-image pills, and a labelled add-to-cart button under the price.
+  compact?: boolean;
 }) {
   const { locale = 'ar' } = useParams();
   const loc: StorefrontLocale = 'ar';
@@ -93,7 +97,7 @@ export function ProductCard({
 
   return (
     <article
-      className={`group relative ${out ? 'opacity-70' : ''} ${
+      className={`group relative ${compact ? 'flex h-full flex-col' : ''} ${out ? 'opacity-70' : ''} ${
         card
           ? 'overflow-hidden rounded-[11px] border border-espresso/10 bg-white shadow-none transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_28px_-12px_rgba(222,98,27,0.25)]'
           : ''
@@ -106,19 +110,19 @@ export function ProductCard({
             : 'relative overflow-hidden rounded-sm bg-taupe/20 shadow-[0_16px_32px_-20px_rgba(41,34,30,0.28)] ring-1 ring-espresso/5 transition-shadow duration-500 group-hover:shadow-[0_20px_40px_-18px_rgba(41,34,30,0.38)]'
         }
       >
-        <Link to={productHref} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold max-h-[300px]">
+        <Link to={productHref} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold max-h-[270px]">
           <AssetImage
             src={product.image}
             alt={product.name[loc]}
             loading="lazy"
-            className="aspect-[4/5] w-full object-cover transition duration-700 group-hover:scale-105"
+            className={`${compact ? 'aspect-[3/2] sm:aspect-[2/1]' : 'aspect-[4/5]'} w-full object-cover transition duration-700 group-hover:scale-105`}
           />
           <AssetImage
             src={product.imageHover}
             alt=""
             loading="lazy"
             aria-hidden
-            className="absolute inset-0 aspect-[4/5] w-full object-cover opacity-0 transition duration-700 group-hover:opacity-100"
+            className={`absolute inset-0 ${compact ? 'aspect-[3/2] sm:aspect-[2/1]' : 'aspect-[4/5]'} w-full object-cover opacity-0 transition duration-700 group-hover:opacity-100`}
           />
           {/* Dark tint — a flat overlay transitions reliably everywhere,
               unlike animating a gradient's own color stops. */}
@@ -148,7 +152,7 @@ export function ProductCard({
             (card variant only — other listings keep them as plain text
             lines under the title). pointer-events-none so taps still land
             on the product link underneath. */}
-        {card && (
+        {card && !compact && (
           <div className="pointer-events-none absolute bottom-3 start-3 flex items-center gap-2">
             {categoryName && (
               <span className="rounded-md bg-burgundy px-3 py-1 text-[11px] font-semibold text-white shadow-sm">
@@ -204,11 +208,13 @@ export function ProductCard({
         </p>
       </div>
       {quickViewOpen && <QuickViewModal product={product} onClose={() => setQuickViewOpen(false)} />}
-      <div className={card ? 'px-4 pb-4 pt-3' : 'pt-4'}>
+      <div className={compact ? 'flex flex-1 flex-col px-3.5 pb-3.5 pt-2.5' : card ? 'px-4 pb-4 pt-3' : 'pt-4'}>
         <Link
           to={productHref}
-          className={`text-[20px] block font-display text-espresso transition hover:text-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
-            card ? 'text-base' : ''
+          className={`text-[17px] ${compact ? "" : "block"} font-display text-espresso transition hover:text-burgundy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold ${
+            // Phones: reserve exactly 3 title lines and clamp longer titles, so every card in a row
+            // has the same title block. From sm up, cards in a row are equalised by the flex layout.
+            compact ? 'line-clamp-3 min-h-[3.125em] text-base font-bold leading-snug sm:min-h-0 sm:text-[15px] sm:font-normal' : card ? 'text-base' : ''
           }`}
         >
           {product.name[loc]}
@@ -216,20 +222,31 @@ export function ProductCard({
         {/* Card variant shows category + availability as on-image pills
             instead of these text lines. */}
         {!card && categoryName && <p className="mt-1 text-xs text-espresso/55">{categoryName}</p>}
-        <div className={`mt-1.5 flex gap-2 ${card ? 'items-center justify-between' : 'items-baseline'}`}>
-          <div className="flex items-baseline gap-2">
-            <span className={`text-sm font-semibold ${product.compareAtPrice ? 'text-burgundy' : 'text-espresso'}`}>
+        <div className={`mt-1.5 flex gap-2 ${compact ? 'items-start justify-between max-sm:min-h-11' : card ? 'items-center justify-between' : 'items-baseline'}`}>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className={`whitespace-nowrap text-sm font-semibold ${product.compareAtPrice ? 'text-burgundy' : 'text-espresso'}`}>
               {formatPrice(product.price, loc)}
             </span>
             {product.compareAtPrice && (
-              <span className="text-xs text-espresso/45 line-through" dir="ltr">
+              <span className="whitespace-nowrap text-xs text-espresso/45 line-through" dir="ltr">
                 {formatPrice(product.compareAtPrice, loc)}
               </span>
             )}
           </div>
+          {compact && (
+            <button
+              type="button"
+              onClick={() => setQuickViewOpen(true)}
+              aria-label={toolbarCopy.quickView}
+              title={toolbarCopy.quickView}
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-porcelain text-espresso/55 transition hover:text-burgundy focus-visible:outline-2 focus-visible:outline-burgundy sm:hidden"
+            >
+              <Search className="size-3.5" />
+            </button>
+          )}
           {/* Card variant: same quick-view/cart actions as the on-image
               toolbar, rendered smaller inline next to the price. */}
-          {card && (
+          {card && !compact && (
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -253,6 +270,28 @@ export function ProductCard({
             </div>
           )}
         </div>
+        {compact && (
+          <div className="mt-auto flex items-center justify-between gap-2 pt-2.5">
+            <button
+              type="button"
+              onClick={() => setQuickViewOpen(true)}
+              aria-label={toolbarCopy.quickView}
+              title={toolbarCopy.quickView}
+              className="hidden size-8 items-center justify-center sm:inline-flex rounded-full text-espresso/50 transition hover:bg-porcelain hover:text-burgundy focus-visible:outline-2 focus-visible:outline-burgundy"
+            >
+              <Search className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleCartIcon}
+              disabled={out}
+              className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-burgundy px-2.5 text-[13px] sm:h-8 sm:w-auto sm:px-3.5 sm:text-[12px] font-semibold text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-burgundy disabled:pointer-events-none disabled:opacity-50"
+            >
+              <ShoppingCart className="size-3.5" aria-hidden />
+              {out ? availabilityLabel.out_of_stock[loc] : quickAddOptions ? toolbarCopy.addToCart : toolbarCopy.chooseOptions}
+            </button>
+          </div>
+        )}
         {!card && (
           <p
             className={`mt-1 text-[11px] tracking-wide ${

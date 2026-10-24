@@ -77,7 +77,7 @@ function defaultAttributes(): AttributeDef[] {
       categories: [],
       required: false,
       variationCapable: true,
-      filterable: false, // facet exists already as the legacy 'color' param
+      filterable: true, // shows the colour filter on listings; admins can switch it off in السمات
       enabled: true,
       order: 1,
       values: seedValues(colorOptions),
@@ -182,7 +182,19 @@ function migrate(raw: unknown): AttributeDef[] {
   for (const d of defaults) {
     if (!seen.has(d.key)) out.push({ ...d, order: out.length + 1 });
   }
-  return out;
+  // Additive only: a saved 'size' attribute that predates the dimension audit
+  // gains any seeded size values it lacks (so seed products never fall back to
+  // raw keys). Saved values — labels, enabled state, order — are never touched
+  // and nothing is removed.
+  const sizeDefault = defaults.find((d) => d.key === 'size');
+  return out.map((a) => {
+    if (a.key !== 'size' || !sizeDefault) return a;
+    const have = new Set(a.values.map((v) => v.key));
+    const missing = sizeDefault.values.filter((v) => !have.has(v.key));
+    if (missing.length === 0) return a;
+    const base = a.values.reduce((m, v) => Math.max(m, v.order), 0);
+    return { ...a, values: [...a.values, ...missing.map((v, i) => ({ ...v, order: base + i + 1 }))] };
+  });
 }
 
 function readAll(): AttributeDef[] {

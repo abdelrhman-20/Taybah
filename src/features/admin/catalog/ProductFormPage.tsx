@@ -614,8 +614,9 @@ export function ProductFormPage() {
     if (!catalog.categories.some((c) => c.slug === fields.category))
       e.category = 'اختر تصنيفًا.';
     if (!fields.collection) e.collection = 'اختر مجموعة.';
-    if (fields.sizes.length === 0) e.sizes = 'اختر مقاسًا واحدًا على الأقل.';
-    else if (!fields.sizes.includes(fields.size)) e.size = 'المقاس الافتراضي يجب أن يكون ضمن المقاسات المختارة.';
+    // A product may have no size at all (dimensions not confirmed yet, or a selling
+    // model that doesn't use sizes) — but a default, if set, must be one of its sizes.
+    if (fields.sizes.length > 0 && !fields.sizes.includes(fields.size)) e.size = 'المقاس الافتراضي يجب أن يكون ضمن المقاسات المختارة.';
     if (!fields.image.trim()) e.image = 'الصورة الأساسية مطلوبة.';
 
     // Variant gate — a designated matrix must be structurally valid AND

@@ -9,11 +9,12 @@ import {
 import { AnnouncementBar } from '../../features/storefront/layout/AnnouncementBar';
 import { StorefrontHeader } from '../../features/storefront/layout/StorefrontHeader';
 import { StorefrontFooter } from '../../features/storefront/layout/StorefrontFooter';
-import { SocialSidebar } from '../../features/storefront/layout/SocialSidebar';
+import { BottomNav } from '../../features/storefront/layout/BottomNav';
 import { BackToTopButton } from '../../features/storefront/layout/BackToTopButton';
 import { CartDrawer } from '../../features/storefront/cart/CartDrawer';
 import { PageTransitionProvider } from '../../features/storefront/layout/PageTransition';
 import { ErrorBoundary } from '../../features/shared/components/ErrorBoundary';
+import { Reveal } from '../../features/shared/components/Reveal';
 import { ScrollToTop } from '../../features/shared/components/ScrollToTop';
 
 const skipLabel = { ar: 'تخطَّ إلى المحتوى', en: 'Skip to content' };
@@ -41,7 +42,7 @@ export function StorefrontLayout() {
 
   return (
     <PageTransitionProvider>
-      <div className="flex min-h-screen flex-col">
+      <div className="flex min-h-screen flex-col pb-[calc(3.5rem+env(safe-area-inset-bottom))] lg:pb-0">
         <ScrollToTop />
         <a
           href="#main-content"
@@ -51,7 +52,6 @@ export function StorefrontLayout() {
         </a>
         <AnnouncementBar />
         <StorefrontHeader />
-        <SocialSidebar />
         <main id="main-content" className="flex-1">
           <ErrorBoundary
             title="حدث خطأ غير متوقع"
@@ -63,8 +63,11 @@ export function StorefrontLayout() {
             <Outlet />
           </ErrorBoundary>
         </main>
-        <StorefrontFooter />
+        <Reveal variant="fade" duration={600}>
+          <StorefrontFooter />
+        </Reveal>
         <CartDrawer />
+        <BottomNav />
         <BackToTopButton />
       </div>
     </PageTransitionProvider>

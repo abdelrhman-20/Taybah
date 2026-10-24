@@ -20,11 +20,19 @@ export function AdminHomepagePage() {
   const preview = (key: HomeSectionKey): string => {
     switch (key) {
       case 'hero':
-        return `${home.hero.title} — ${home.hero.images.length} صور`;
+        return `${home.hero.slides.length} شرائح — ${home.hero.slides.filter((s) => s.visible).length} ظاهرة`;
       case 'brand':
       case 'editorial':
       case 'newsletter':
         return home[key].title;
+      case 'shopCategories':
+        return `${home.shopCategories.title} — ${home.shopCategories.cards.length} بطاقات`;
+      case 'collections':
+        return `${home.collections.title} — ${home.collections.cards.length} مجموعات`;
+      case 'bestSellers':
+        return `${home.bestSellers.title} — ${home.bestSellers.productIds.length} منتجًا`;
+      case 'story':
+        return home.story.title;
       case 'categories':
         return `${home.categories.title} — ${home.categories.slugs.length} قسمًا`;
       case 'products':

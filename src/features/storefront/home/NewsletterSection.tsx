@@ -1,8 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { Button } from '../../shared/components/Button';
+import { AssetImage } from '../../shared/components/AssetImage';
 import { Container } from '../../shared/components/Container';
-import { OrnamentDivider } from '../../shared/components/OrnamentDivider';
-import { emphasizeLastWord } from '../../shared/utils/emphasize';
 import type { HomeContent } from './homeStore';
 
 // No subscription backend exists yet (Taybah is frontend-only at this
@@ -21,21 +19,27 @@ export function NewsletterSection({ content }: { content: HomeContent['newslette
   };
 
   return (
-    <section aria-labelledby="newsletter" className="border-t border-taupe/60 py-16 sm:py-24">
-      <Container className="max-w-2xl text-center">
-        <p className="mb-4 text-[14px] font-semibold tracking-[0.3em] text-burgundy uppercase">
-          {content.eyebrow}
-        </p>
-        <h2 id="newsletter" className="font-display text-3xl text-espresso sm:text-4xl">
-          {emphasizeLastWord(content.title)}
+    <section aria-labelledby="newsletter" className="relative isolate overflow-hidden bg-espresso py-7 sm:py-8">
+      {content.image && (
+        <AssetImage
+          src={content.image}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 -z-20 size-full object-cover"
+        />
+      )}
+      <div className="absolute inset-0 -z-10 bg-espresso/65" aria-hidden="true" />
+      <Container className="max-w-3xl text-center text-white">
+        {content.eyebrow && <p className="mb-1 text-[13px] font-medium text-gold">{content.eyebrow}</p>}
+        <h2 id="newsletter" className="font-display text-2xl leading-snug sm:text-[1.9rem]">
+          {content.title}
         </h2>
-        <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-espresso/65">
+        <p className="mx-auto mt-1.5 max-w-lg text-[13px] leading-relaxed text-white/80 sm:text-sm">
           {content.body}
         </p>
-        <OrnamentDivider align="center" className="mt-6" />
         <form
           onSubmit={onSubmit}
-          className="mx-auto mt-8 flex max-w-md flex-col gap-3 sm:flex-row"
+          className="mx-auto mt-3 flex max-w-lg overflow-hidden rounded-full bg-white shadow-md focus-within:ring-2 focus-within:ring-gold"
         >
           <label htmlFor="newsletter-email" className="sr-only">
             {content.placeholder}
@@ -45,18 +49,21 @@ export function NewsletterSection({ content }: { content: HomeContent['newslette
             type="email"
             required
             placeholder={content.placeholder}
-            className="w-full flex-1 rounded-sm border border-taupe bg-white px-4 py-3 text-sm text-espresso placeholder:text-espresso/40 focus:border-burgundy focus:outline-1 focus:outline-burgundy"
+            className="min-w-0 flex-1 bg-transparent px-5 py-2.5 text-sm text-espresso placeholder:text-espresso/45 focus:outline-none"
           />
-          <Button type="submit" size="lg" className="shrink-0">
+          <button
+            type="submit"
+            className="shrink-0 bg-burgundy px-6 text-sm font-semibold text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-gold"
+          >
             {content.submitLabel}
-          </Button>
+          </button>
         </form>
         {submitted && (
-          <p role="status" aria-live="polite" className="mt-3 text-xs font-medium text-burgundy">
+          <p role="status" aria-live="polite" className="mt-3 text-xs font-medium text-gold">
             {UNAVAILABLE_MESSAGE}
           </p>
         )}
-        <p className="mt-4 text-xs text-espresso/45">{content.privacy}</p>
+        <p className="mt-2 text-xs text-white/60">{content.privacy}</p>
       </Container>
     </section>
   );

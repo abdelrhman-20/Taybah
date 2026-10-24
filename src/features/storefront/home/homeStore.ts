@@ -11,6 +11,10 @@ const STORAGE_KEY = 'taybah:homepage';
 
 export type HomeSectionKey =
   | 'hero'
+  | 'shopCategories'
+  | 'collections'
+  | 'bestSellers'
+  | 'story'
   | 'categories'
   | 'products'
   | 'brand'
@@ -23,19 +27,69 @@ export interface HomeSectionMeta {
   visible: boolean;
 }
 
+// Card entries reference real catalog records by slug. Empty text/image fields
+// fall back to the catalog record itself, so nothing is duplicated unless the
+// admin deliberately overrides it.
+export interface ShopCategoryCard {
+  slug: string;
+  title: string;
+  subtitle: string;
+  image: string;
+}
+
+export interface CollectionCard {
+  slug: string;
+  title: string;
+  description: string;
+  image: string;
+}
+
+// One hero slide = its own image + its own copy and CTAs. Slides never share
+// content; array order is display order, hidden slides never render publicly.
+export interface HeroSlideContent {
+  id: string;
+  visible: boolean;
+  image: string;
+  eyebrow: string;
+  title: string;
+  body: string;
+  primaryLabel: string;
+  primaryTo: string;
+  // Optional — the secondary button renders only when both are filled in.
+  secondaryLabel: string;
+  secondaryTo: string;
+}
+
 export interface HomeContent {
   // Render order = array order; hidden sections never render publicly.
   sections: HomeSectionMeta[];
-  hero: {
+  hero: { slides: HeroSlideContent[] };
+  shopCategories: { eyebrow: string; title: string; subtitle: string; cards: ShopCategoryCard[] };
+  collections: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    actionLabel: string;
+    actionTo: string;
+    ctaLabel: string;
+    cards: CollectionCard[];
+  };
+  // No real sales metric exists — this is an admin-curated product selection.
+  bestSellers: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    actionLabel: string;
+    actionTo: string;
+    productIds: string[];
+  };
+  story: {
     eyebrow: string;
     title: string;
     body: string;
-    primaryLabel: string;
-    primaryTo: string;
-    secondaryLabel: string;
-    secondaryTo: string;
-    // Slide images in display order — every slide shares the same text/CTAs.
-    images: string[];
+    ctaLabel: string;
+    ctaTo: string;
+    image: string;
   };
   categories: { eyebrow: string; title: string; actionLabel: string; slugs: string[] };
   products: { eyebrow: string; title: string; actionLabel: string; productIds: string[] };
@@ -59,11 +113,17 @@ export interface HomeContent {
     placeholder: string;
     submitLabel: string;
     privacy: string;
+    // Optional background photo for the newsletter band.
+    image: string;
   };
 }
 
 export const SECTION_LABELS: Record<HomeSectionKey, string> = {
   hero: 'قسم البطل الرئيسي',
+  shopCategories: 'تسوّق حسب القسم',
+  collections: 'مجموعات صُممت لتبقى',
+  bestSellers: 'الأكثر اختيارًا',
+  story: 'حكاية طيبة',
   categories: 'الأقسام المميزة',
   products: 'المنتجات المميزة',
   brand: 'تعريف العلامة',
@@ -72,26 +132,194 @@ export const SECTION_LABELS: Record<HomeSectionKey, string> = {
   newsletter: 'النشرة البريدية',
 };
 
+// Initial copy per slide, matched to its photo and to real storefront routes
+// (/category/rugs, /category/furnishings, /collections). Editable in Admin.
+function defaultHeroSlides(): HeroSlideContent[] {
+  const [a, b, c] = placeholderImages.heroSlides;
+  return [
+    {
+      id: 'hero-1',
+      visible: true,
+      image: a,
+      eyebrow: 'حرفة أصيلة',
+      title: 'تفاصيل تصنع الفخامة',
+      body: 'اكتشف سجادًا مختارًا بعناية يضيف الدفء والأناقة إلى منزلك.',
+      primaryLabel: 'اكتشف السجاد',
+      primaryTo: '/category/rugs',
+      secondaryLabel: '',
+      secondaryTo: '',
+    },
+    {
+      id: 'hero-2',
+      visible: true,
+      image: b,
+      eyebrow: 'راحة بتفاصيل راقية',
+      title: 'لمسات تمنح منزلك روحًا جديدة',
+      body: 'اختيارات متناسقة من المفروشات لتصنع مساحة تعبّر عن ذوقك.',
+      primaryLabel: 'اكتشف المفروشات',
+      primaryTo: '/category/furnishings',
+      secondaryLabel: '',
+      secondaryTo: '',
+    },
+    {
+      id: 'hero-3',
+      visible: true,
+      image: c,
+      eyebrow: 'اختيارات طيبة',
+      title: 'الجمال يبدأ من التفاصيل',
+      body: 'تعرّف على مجموعات تجمع بين الأصالة والتصميم المعاصر.',
+      primaryLabel: 'اكتشف المجموعات',
+      primaryTo: '/collections',
+      secondaryLabel: '',
+      secondaryTo: '',
+    },
+  ];
+}
+
+// The copy every slide used to share (before slides had their own content).
+// Only used to recognise an untouched legacy save.
+const LEGACY_HERO_TEXT = {
+  eyebrow: 'طيبة — حِرفة أصيلة',
+  title: 'حيث تلتقي الحِرفة بالفخامة',
+  body: 'سجاد وستائر ومفروشات مختارة بعناية — قطع تحمل روح التراث وتُصمَّم لبيوت اليوم.',
+  primaryLabel: 'تسوّق المجموعة',
+  primaryTo: '/products',
+  secondaryLabel: 'قصتنا',
+  secondaryTo: '/about',
+};
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v);
+
+// Hero migration. New shape: sanitize each slide independently. Legacy shape
+// (one shared text block + `images[]` / single `image`): every stored image
+// becomes its own slide carrying the saved text — nothing the admin saved is
+// lost. If that text is still the untouched old default, the slides get the
+// new distinct per-slide defaults instead, keeping their stored images.
+function migrateHero(rawHero: unknown): HomeContent['hero'] {
+  const defaults = defaultHeroSlides();
+  if (!isRecord(rawHero)) return { slides: defaults };
+  const str = (v: unknown, fallback = '') => (typeof v === 'string' ? v : fallback);
+
+  if (Array.isArray(rawHero.slides)) {
+    const seen = new Set<string>();
+    const slides = rawHero.slides.filter(isRecord).map((x, i): HeroSlideContent => {
+      let id = str(x.id).trim() || `slide-${i + 1}`;
+      while (seen.has(id)) id += '-x';
+      seen.add(id);
+      return {
+        id,
+        visible: x.visible !== false,
+        image: str(x.image),
+        eyebrow: str(x.eyebrow),
+        title: str(x.title),
+        body: str(x.body),
+        primaryLabel: str(x.primaryLabel),
+        primaryTo: str(x.primaryTo),
+        secondaryLabel: str(x.secondaryLabel),
+        secondaryTo: str(x.secondaryTo),
+      };
+    });
+    return { slides: slides.length ? slides : defaults };
+  }
+
+  const textKeys = Object.keys(LEGACY_HERO_TEXT) as (keyof typeof LEGACY_HERO_TEXT)[];
+  const hasText = textKeys.some((k) => typeof rawHero[k] === 'string');
+  const storedImages = Array.isArray(rawHero.images)
+    ? rawHero.images.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    : typeof rawHero.image === 'string' && rawHero.image.trim()
+      ? [rawHero.image]
+      : [];
+  if (!storedImages.length && !hasText) return { slides: defaults };
+
+  const shared = Object.fromEntries(
+    textKeys.map((k) => [k, str(rawHero[k], LEGACY_HERO_TEXT[k])]),
+  ) as typeof LEGACY_HERO_TEXT;
+  const untouched = shared.title === LEGACY_HERO_TEXT.title && shared.body === LEGACY_HERO_TEXT.body;
+  const images = storedImages.length ? storedImages : defaults.map((d) => d.image);
+  return {
+    slides: images.map((image, i) => {
+      const distinct = untouched ? defaults[i] : undefined;
+      return {
+        id: `hero-${i + 1}`,
+        visible: true,
+        image,
+        eyebrow: distinct?.eyebrow ?? shared.eyebrow,
+        title: distinct?.title ?? shared.title,
+        body: distinct?.body ?? shared.body,
+        primaryLabel: distinct?.primaryLabel ?? shared.primaryLabel,
+        primaryTo: distinct?.primaryTo ?? shared.primaryTo,
+        secondaryLabel: distinct ? distinct.secondaryLabel : shared.secondaryLabel,
+        secondaryTo: distinct ? distinct.secondaryTo : shared.secondaryTo,
+      };
+    }),
+  };
+}
+
 function defaultContent(): HomeContent {
   return {
     sections: [
       { key: 'hero', visible: true },
-      { key: 'categories', visible: true },
-      { key: 'products', visible: true },
-      { key: 'brand', visible: true },
-      { key: 'editorial', visible: true },
-      { key: 'collection', visible: true },
+      { key: 'shopCategories', visible: true },
+      { key: 'collections', visible: true },
+      { key: 'bestSellers', visible: true },
+      { key: 'story', visible: true },
+      // Superseded by the four sections above — kept (hidden) so the admin
+      // can still bring them back.
+      { key: 'categories', visible: false },
+      { key: 'products', visible: false },
+      { key: 'brand', visible: false },
+      // Not part of the approved homepage layout — kept (hidden) so the
+      // admin can still enable them.
+      { key: 'editorial', visible: false },
+      { key: 'collection', visible: false },
       { key: 'newsletter', visible: true },
     ],
-    hero: {
-      eyebrow: 'طيبة — حِرفة أصيلة',
-      title: 'حيث تلتقي الحِرفة بالفخامة',
-      body: 'سجاد وستائر ومفروشات مختارة بعناية — قطع تحمل روح التراث وتُصمَّم لبيوت اليوم.',
-      primaryLabel: 'تسوّق المجموعة',
-      primaryTo: '/products',
-      secondaryLabel: 'قصتنا',
-      secondaryTo: '/about',
-      images: [placeholderImages.hero, placeholderImages.brand, placeholderImages.editorial],
+    hero: { slides: defaultHeroSlides() },
+    shopCategories: {
+      eyebrow: 'اكتشف طيبة',
+      title: 'تسوّق حسب القسم',
+      subtitle: 'لكل زاوية في منزلك … اكتشف تشكيلتنا المختارة بعناية',
+      cards: [
+        { slug: 'rugs', title: '', subtitle: 'حرفة أصيلة تحت قدميك', image: '/images/home/category-rugs.jpg' },
+        { slug: 'curtains', title: '', subtitle: 'توازن بين الضوء والخصوصية', image: '/images/home/category-curtains.jpg' },
+        { slug: 'carpets', title: '', subtitle: 'دفء يمنحك الراحة', image: '/images/home/category-carpets.jpg' },
+        { slug: 'furnishings', title: '', subtitle: 'راحة وأناقة تدوم', image: '/images/home/category-furnishings.jpg' },
+        { slug: 'accessories', title: '', subtitle: 'تفاصيل تصنع الفرق', image: '/images/home/category-accessories.jpg' },
+      ],
+    },
+    collections: {
+      eyebrow: '',
+      title: 'مجموعات صُممت لتبقى',
+      subtitle: 'مختارات تعبّر عن ذوق رفيع، تجمع بين الأصالة والتصميم المعاصر',
+      actionLabel: 'عرض جميع المجموعات',
+      actionTo: '/collections',
+      ctaLabel: 'تسوّق المجموعة',
+      cards: [
+        { slug: 'diwan', title: 'ديوان', description: '', image: '/images/home/collection-diwan.jpg' },
+        { slug: 'heritage', title: 'تراث', description: '', image: '/images/home/collection-heritage.jpg' },
+        { slug: 'atelier', title: 'أتيليه', description: '', image: '/images/home/collection-atelier.jpg' },
+      ],
+    },
+    bestSellers: {
+      eyebrow: '',
+      title: 'الأكثر اختيارًا',
+      subtitle: 'منتجات أحبها عملاؤنا وتجمع بين الجودة والتصميم الأصيل',
+      actionLabel: 'عرض جميع المنتجات',
+      actionTo: '/products',
+      // Four featured products — one row on desktop, matching the design.
+      productIds: catalogProducts
+        .filter((p) => p.featured)
+        .slice(0, 4)
+        .map((p) => p.id),
+    },
+    story: {
+      eyebrow: 'حكايتنا',
+      title: 'حكاية طيبة',
+      body: 'من الحرفة الأصيلة إلى منازلكم … نختار بعناية ما يجمع بين الجمال والجودة، لنقدم قطعًا تزين حياتكم وتدوم معكم سنوات طويلة.',
+      ctaLabel: 'اكتشف قصتنا',
+      ctaTo: '/about',
+      image: placeholderImages.brand,
     },
     categories: {
       eyebrow: 'الأقسام',
@@ -136,12 +364,17 @@ function defaultContent(): HomeContent {
       placeholder: 'بريدك الإلكتروني',
       submitLabel: 'اشترك',
       privacy: 'نحترم بريدك — يمكنك إلغاء الاشتراك في أي وقت.',
+      image: '/images/home/product-p19-3.jpg',
     },
   };
 }
 
-const SECTION_KEYS: HomeSectionKey[] = [
+export const HOME_SECTION_KEYS: HomeSectionKey[] = [
   'hero',
+  'shopCategories',
+  'collections',
+  'bestSellers',
+  'story',
   'categories',
   'products',
   'brand',
@@ -160,14 +393,27 @@ function migrate(raw: Partial<HomeContent> | null): HomeContent {
   const seen = new Set<HomeSectionKey>();
   const sections: HomeSectionMeta[] = [];
   for (const m of storedMeta) {
-    if (!m || typeof m.key !== 'string' || !SECTION_KEYS.includes(m.key as HomeSectionKey))
+    if (!m || typeof m.key !== 'string' || !HOME_SECTION_KEYS.includes(m.key as HomeSectionKey))
       continue;
     const key = m.key as HomeSectionKey;
     if (seen.has(key)) continue;
     seen.add(key);
     sections.push({ key, visible: m.visible !== false });
   }
-  for (const key of SECTION_KEYS) {
+  // One-time upgrade of content saved before the four newer sections existed:
+  // they slot in right below the hero (in order), and the older sections they
+  // supersede are hidden so the page doesn't show duplicates. The admin can
+  // re-enable any of them.
+  const NEW_KEYS: HomeSectionKey[] = ['shopCategories', 'collections', 'bestSellers', 'story'];
+  if (NEW_KEYS.every((k) => !seen.has(k)) && sections.length > 0) {
+    const heroAt = sections.findIndex((x) => x.key === 'hero');
+    sections.splice(heroAt + 1, 0, ...NEW_KEYS.map((key) => ({ key, visible: true })));
+    for (const m of sections) {
+      if (m.key === 'categories' || m.key === 'products' || m.key === 'brand') m.visible = false;
+    }
+    NEW_KEYS.forEach((k) => seen.add(k));
+  }
+  for (const key of HOME_SECTION_KEYS) {
     if (!seen.has(key)) sections.push({ key, visible: true });
   }
 
@@ -176,29 +422,49 @@ function migrate(raw: Partial<HomeContent> | null): HomeContent {
     ...((raw[key] as Partial<T> | undefined) ?? {}),
   });
 
-  // Legacy shape stored `hero.image: string` — fold it into `images[]` and
-  // guarantee at least one slide (validation requires one anyway). `images`
-  // must be read from the RAW stored hero: merge() already backfills the
-  // defaults, so a merged array can't tell stored from seeded.
-  const { image: legacyImage, ...heroRest } = merge<
-    HomeContent['hero'] & { image?: string }
-  >('hero');
-  const rawImages = (raw.hero as { images?: unknown } | undefined)?.images;
-  const storedImages = Array.isArray(rawImages)
-    ? rawImages.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
-    : [];
-  const hero: HomeContent['hero'] = {
-    ...heroRest,
-    images: storedImages.length
-      ? storedImages
-      : legacyImage?.trim()
-        ? [legacyImage]
-        : defaults.hero.images,
-  };
+  const hero = migrateHero(raw.hero);
+
+  const str = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallback);
+  const records = (v: unknown): Record<string, unknown>[] =>
+    Array.isArray(v)
+      ? v.filter(
+          (c): c is Record<string, unknown> =>
+            !!c && typeof c === 'object' && typeof (c as { slug?: unknown }).slug === 'string',
+        )
+      : [];
+  const shopCategories = merge<HomeContent['shopCategories']>('shopCategories');
+  const rawShop = (raw.shopCategories as { cards?: unknown } | undefined)?.cards;
+  shopCategories.cards = Array.isArray(rawShop)
+    ? records(rawShop).map((c) => ({
+        slug: c.slug as string,
+        title: str(c.title, ''),
+        subtitle: str(c.subtitle, ''),
+        image: str(c.image, ''),
+      }))
+    : defaults.shopCategories.cards;
+  const collections = merge<HomeContent['collections']>('collections');
+  const rawColl = (raw.collections as { cards?: unknown } | undefined)?.cards;
+  collections.cards = Array.isArray(rawColl)
+    ? records(rawColl).map((c) => ({
+        slug: c.slug as string,
+        title: str(c.title, ''),
+        description: str(c.description, ''),
+        image: str(c.image, ''),
+      }))
+    : defaults.collections.cards;
+  const bestSellers = merge<HomeContent['bestSellers']>('bestSellers');
+  const rawIds = (raw.bestSellers as { productIds?: unknown } | undefined)?.productIds;
+  bestSellers.productIds = Array.isArray(rawIds)
+    ? rawIds.filter((x): x is string => typeof x === 'string')
+    : defaults.bestSellers.productIds;
 
   return {
     sections,
     hero,
+    shopCategories,
+    collections,
+    bestSellers,
+    story: merge<HomeContent['story']>('story'),
     categories: merge<HomeContent['categories']>('categories'),
     products: merge<HomeContent['products']>('products'),
     brand: merge<HomeContent['brand']>('brand'),

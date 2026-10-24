@@ -157,7 +157,10 @@ describe('imageReferences', () => {
 
   it('detects every homepage section image independently', async () => {
     const { home, refs } = await stores();
-    home.updateHomeSection('hero', { ...home.getHomeContent().hero, images: ['local:asset-hero'] });
+    const hero = home.getHomeContent().hero;
+    home.updateHomeSection('hero', {
+      slides: [{ ...hero.slides[0], image: 'local:asset-hero' }, ...hero.slides.slice(1)],
+    });
     home.updateHomeSection('brand', { ...home.getHomeContent().brand, image: 'local:asset-brand' });
     expect(refs.imageReferences('asset-hero')).toEqual([expect.stringContaining('البطل')]);
     expect(refs.imageReferences('asset-brand')).toEqual([expect.stringContaining('العلامة')]);
@@ -167,6 +170,23 @@ describe('imageReferences', () => {
     const { orders, refs } = await stores();
     await orders.saveOrder(order([orderLine({ image: 'local:asset-order' })]));
     expect(refs.imageReferences('asset-order')).toEqual([expect.stringContaining('TYB-2025-TEST')]);
+  });
+
+  it('detects images used by the story, category-card and collection-card sections', async () => {
+    const { home, refs } = await stores();
+    const c = home.getHomeContent();
+    home.updateHomeSection('story', { ...c.story, image: 'local:asset-story' });
+    home.updateHomeSection('shopCategories', {
+      ...home.getHomeContent().shopCategories,
+      cards: [{ slug: 'rugs', title: '', subtitle: '', image: 'local:asset-cat' }],
+    });
+    home.updateHomeSection('collections', {
+      ...home.getHomeContent().collections,
+      cards: [{ slug: 'diwan', title: '', description: '', image: 'local:asset-coll' }],
+    });
+    expect(refs.imageReferences('asset-story')).toHaveLength(1);
+    expect(refs.imageReferences('asset-cat')).toHaveLength(1);
+    expect(refs.imageReferences('asset-coll')).toHaveLength(1);
   });
 
   it('aggregates multiple distinct references to the same asset', async () => {

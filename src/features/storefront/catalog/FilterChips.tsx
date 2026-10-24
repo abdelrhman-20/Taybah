@@ -81,6 +81,20 @@ export function FilterChips({
       remove: () => ctrl.setInStockOnly(false),
     });
   }
+  if (f.newOnly) {
+    chips.push({
+      key: 'new',
+      label: locale === 'ar' ? 'وصل حديثًا' : 'New arrivals',
+      remove: () => ctrl.setNewOnly(false),
+    });
+  }
+  if (f.offersOnly) {
+    chips.push({
+      key: 'offers',
+      label: locale === 'ar' ? 'عروض وخصومات' : 'Offers & discounts',
+      remove: () => ctrl.setOffersOnly(false),
+    });
+  }
 
   if (activeFilterCount(f) === 0) return null;
 

@@ -17,7 +17,7 @@ export function QuantityStepper({
 }) {
   const t = copy[locale];
   return (
-    <div className="inline-flex items-center border border-espresso/25" role="group" aria-label={t.qty}>
+    <div className="inline-flex items-center overflow-hidden rounded-md border border-espresso/25 bg-white" role="group" aria-label={t.qty}>
       <button
         type="button"
         aria-label={t.decrease}
