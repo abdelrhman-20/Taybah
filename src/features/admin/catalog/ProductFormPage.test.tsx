@@ -106,6 +106,42 @@ describe('product editor — save lifecycle', () => {
     expect(row(b).revision).toBe(2);
   });
 
+  it('STALE TAB + SKU: a duplicate created in another tab is refused by the DATABASE; the draft is kept and the next attempt is caught by the form', async () => {
+    const b = await freshBackend('admin');
+    const docs = await mount(b);
+    // another tab/admin creates a product with a SKU this tab has never seen
+    b.putDoc('product', 'other', product('other', { sku: 'NEW-SKU' }), { slug: 'slug-other' });
+    expect(docs.getDoc('product', 'other')).toBeUndefined();
+
+    const skuInput = screen.getByLabelText(/^SKU/) as HTMLInputElement;
+    await userEvent.clear(skuInput);
+    await userEvent.type(skuInput, 'new-sku');
+    await userEvent.click(submitBtn());
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('رمز المنتج (SKU) مستخدم بالفعل');
+    expect(alert.textContent).toContain('لم يُحفظ شيء');
+    expect((row(b).data as { sku: string }).sku).toBe('SKU-P1'); // database unchanged
+    expect(skuInput.value).toBe('new-sku'); // draft preserved
+    expect(b.calls('rpc:catalog_write')).toBe(1);
+
+    // the tab resynced after the refusal, so the FORM's own check now catches it
+    // immediately, without another server round-trip
+    await waitFor(() => expect(docs.getDoc('product', 'other')).toBeTruthy());
+    await userEvent.click(submitBtn());
+    expect(await screen.findByText(/SKU مستخدم بالفعل/)).toBeTruthy();
+    expect(b.calls('rpc:catalog_write')).toBe(1);
+  });
+
+  it('keeping the product\'s OWN SKU while editing other fields is never a duplicate', async () => {
+    const b = await freshBackend('admin');
+    await mount(b);
+    await rename('اسم آخر فقط');
+    await userEvent.click(submitBtn());
+    expect(await screen.findByText('تفاصيل المنتج')).toBeTruthy();
+    expect((row(b).data as { sku: string }).sku).toBe('SKU-P1');
+  });
+
   it('validation problems never reach the server and keep the form', async () => {
     const b = await freshBackend('admin');
     await mount(b);

@@ -352,12 +352,12 @@ describe('persistence (catalog documents)', () => {
 
   it('new products are listed first (newest first), matching the old array order', async () => {
     const { catalog } = await stores();
-    await catalog.upsertProduct(product({ id: 'a', slug: 'a' }));
-    await catalog.upsertProduct(product({ id: 'b', slug: 'b' }));
-    await catalog.upsertProduct(product({ id: 'c', slug: 'c' }));
+    await catalog.upsertProduct(product({ id: 'a', slug: 'a', sku: 'SKU-A' }));
+    await catalog.upsertProduct(product({ id: 'b', slug: 'b', sku: 'SKU-B' }));
+    await catalog.upsertProduct(product({ id: 'c', slug: 'c', sku: 'SKU-C' }));
     expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['c', 'b', 'a']);
     // editing keeps the position
-    await catalog.upsertProduct(product({ id: 'b', slug: 'b', price: 5 }));
+    await catalog.upsertProduct(product({ id: 'b', slug: 'b', sku: 'SKU-B', price: 5 }));
     expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['c', 'b', 'a']);
   });
 
@@ -395,8 +395,8 @@ describe('persistence (catalog documents)', () => {
 
   it('draft (unpublished) products are not delivered to visitors', async () => {
     const { b, catalog, docs } = await stores();
-    await catalog.upsertProduct(product({ id: 'live', slug: 'live' }));
-    await catalog.upsertProduct(product({ id: 'draft', slug: 'draft', published: false }));
+    await catalog.upsertProduct(product({ id: 'live', slug: 'live', sku: 'SKU-LIVE' }));
+    await catalog.upsertProduct(product({ id: 'draft', slug: 'draft', sku: 'SKU-DRAFT', published: false }));
     b.signIn('anon');
     await docs.refreshDocs();
     expect(catalog.getCatalog().products.map((p) => p.id)).toEqual(['live']);

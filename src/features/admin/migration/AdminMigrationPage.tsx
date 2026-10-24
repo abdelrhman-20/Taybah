@@ -12,8 +12,10 @@ import {
   type LegacySource,
   type ParsedLegacy,
 } from './legacyBundle';
+import { SkuResolution } from './SkuResolution';
 import {
   buildPlan,
+  isSkuConflict,
   finalizeMigration,
   homeLocalRefs,
   importDocs,
@@ -24,6 +26,7 @@ import {
   type HomeRewriteResult,
   type ImportReport,
   type MigrationPlan,
+  type SkuOverrides,
   type UploadResult,
   type VerifyReport,
 } from './migrationEngine';
@@ -97,10 +100,50 @@ export function AdminMigrationPage() {
   const home = useSaveAction();
   const cutover = useSaveAction();
 
-  const plan: MigrationPlan | null = useMemo(
+  // SKU replacements typed by the admin (applied to the imported copy only) and
+  // the SKU conflicts the database has reported so far (kept so the rows the
+  // admin is working on do not vanish while typing).
+  const [skuOverrides, setSkuOverrides] = useState<SkuOverrides>({});
+  const [skuConflicts, setSkuConflicts] = useState<
+    Array<{ id: string; reason: ImportReport['conflicts'][number]['reason']; sku?: string }>
+  >([]);
+
+  // `basePlan` has no overrides (defines which SKUs need a value); `plan` is
+  // what is actually imported.
+  const basePlan: MigrationPlan | null = useMemo(
     () => (source && parsed && parsed.errors.length === 0 ? buildPlan(parsed, source) : null),
     [source, parsed],
   );
+  const plan: MigrationPlan | null = useMemo(
+    () =>
+      source && parsed && parsed.errors.length === 0 ? buildPlan(parsed, source, skuOverrides) : null,
+    [source, parsed, skuOverrides],
+  );
+
+  const rememberSkuConflicts = (c: ImportReport['conflicts']) =>
+    setSkuConflicts((prev) => {
+      const next = [...prev];
+      for (const x of c) {
+        if (isSkuConflict(x.reason) && !next.some((y) => y.id === x.id && y.sku === x.sku)) {
+          next.push({ id: x.id, reason: x.reason, sku: x.sku });
+        }
+      }
+      return next;
+    });
+
+  const changeSku = (key: string, value: string) => {
+    setSkuOverrides((o) => {
+      const next = { ...o };
+      if (value.trim() === '') delete next[key];
+      else next[key] = value;
+      return next;
+    });
+    // Different data => the earlier dry run / upload / import no longer applies.
+    setDry(null);
+    setUploads(null);
+    setReport(null);
+    setVerify(null);
+  };
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -124,6 +167,8 @@ export function AdminMigrationPage() {
     });
     if (!r.ok) return;
     reset();
+    setSkuOverrides({});
+    setSkuConflicts([]);
     setSource(r.value.s);
     setParsed(r.value.p);
     setFromBackup(false);
@@ -139,6 +184,8 @@ export function AdminMigrationPage() {
     if (fileInput.current) fileInput.current.value = '';
     if (!r.ok) return;
     reset();
+    setSkuOverrides({});
+    setSkuConflicts([]);
     setSource(r.value.s);
     setParsed(r.value.p);
     setFromBackup(true);
@@ -157,7 +204,10 @@ export function AdminMigrationPage() {
   const doDryRun = async () => {
     if (!plan) return;
     const r = await dryRun.run(() => importDocs(plan.docs, true));
-    if (r.ok) setDry(r.value);
+    if (r.ok) {
+      setDry(r.value);
+      rememberSkuConflicts(r.value.conflicts);
+    }
   };
 
   const execute = async () => {
@@ -174,6 +224,7 @@ export function AdminMigrationPage() {
       setProgress('استيراد السجلات…');
       const rep = await importDocs(plan.docs, false);
       setReport(rep);
+      rememberSkuConflicts(rep.conflicts);
       setProgress('التحقق من الحفظ…');
       const v = await verifyMigration(plan, up);
       setVerify(v);
@@ -196,7 +247,12 @@ export function AdminMigrationPage() {
   };
 
   const uploadFailures = uploads?.filter((u) => u.status === 'failed') ?? [];
-  const canExecute = Boolean(plan && backupSaved && dry && !run.busy);
+  // Unresolved duplicate SKUs (in the data, or reported by the database) block
+  // the run: the database would refuse those products anyway.
+  const skuBlocked = Boolean(
+    plan && (plan.skuProblems.length > 0 || dry?.conflicts.some((c) => isSkuConflict(c.reason))),
+  );
+  const canExecute = Boolean(plan && backupSaved && dry && !skuBlocked && !run.busy);
   const canFinalize = Boolean(verify?.ok && report && report.conflicts.length === 0 && !docs.initialized);
   const localHomeRefs = homeLocalRefs();
 
@@ -328,6 +384,15 @@ export function AdminMigrationPage() {
             {dryRun.error}
           </p>
         )}
+        {basePlan && plan && (
+          <SkuResolution
+            base={basePlan}
+            effective={plan}
+            serverConflicts={skuConflicts}
+            overrides={skuOverrides}
+            onChange={changeSku}
+          />
+        )}
         {dry && plan && (
           <div className="rounded border border-taupe/60 bg-porcelain/50 p-3 text-xs leading-6">
             <p>سيُضاف: {dry.inserted.length} · مطابق بالفعل: {dry.unchanged.length} · تعارض: {dry.conflicts.length}</p>
@@ -351,6 +416,11 @@ export function AdminMigrationPage() {
         <button type="button" className={primaryBtn} disabled={!canExecute} onClick={execute}>
           {run.busy ? progress ?? 'جارٍ التنفيذ…' : 'بدء الترحيل'}
         </button>
+        {skuBlocked && (
+          <p className="text-xs font-medium text-burgundy">
+            حلّ تكرارات رمز SKU أعلاه ثم أعد تشغيل الفحص التجريبي.
+          </p>
+        )}
         {!backupSaved && source && <p className="text-xs text-burgundy">نزّل النسخة الاحتياطية أولًا.</p>}
         {backupSaved && !dry && <p className="text-xs text-espresso/60">شغّل الفحص التجريبي أولًا.</p>}
         {run.error && (
@@ -454,6 +524,13 @@ export function AdminMigrationPage() {
   );
 }
 
+const CONFLICT_AR: Record<ImportReport['conflicts'][number]['reason'], string> = {
+  different_data: 'يوجد سجل مختلف بنفس المعرّف',
+  slug_taken: 'الـ slug مستخدم في سجل آخر',
+  sku_taken: 'رمز SKU مستخدم في منتج آخر',
+  sku_duplicate_in_product: 'رمز SKU مكرر داخل المنتج نفسه',
+};
+
 function ConflictList({ report }: { report: ImportReport }) {
   if (report.conflicts.length === 0) return null;
   return (
@@ -465,7 +542,8 @@ function ConflictList({ report }: { report: ImportReport }) {
         {report.conflicts.slice(0, 50).map((c) => (
           <li key={`${c.kind}:${c.id}`} dir="ltr" className="text-start">
             {c.kind}/{c.id} —{' '}
-            {c.reason === 'slug_taken' ? 'الـ slug مستخدم في سجل آخر' : 'يوجد سجل مختلف بنفس المعرّف'}
+            {CONFLICT_AR[c.reason]}
+            {c.sku ? ` (${c.sku})` : ''}
           </li>
         ))}
       </ul>

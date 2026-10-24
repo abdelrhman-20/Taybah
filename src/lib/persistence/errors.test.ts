@@ -8,6 +8,7 @@ describe('classifyError', () => {
     [{ code: 'CF002', message: 'not_found' }, 'not_found'],
     [{ code: 'CF003', message: 'already_exists' }, 'exists'],
     [{ code: 'CF004', message: 'duplicate_slug' }, 'duplicate_slug'],
+    [{ code: 'CF005', message: 'duplicate_sku', details: 'Key (sku)=(abc-1) already exists.' }, 'duplicate_sku'],
     [{ code: '22023', message: 'invalid_ops' }, 'invalid'],
     [{ code: '42501', message: 'forbidden' }, 'unauthorized'],
     [{ code: '42501', message: 'new row violates row-level security policy' }, 'unauthorized'],
@@ -37,13 +38,20 @@ describe('describePersistenceError', () => {
   it('gives every code a non-empty Arabic message', () => {
     const codes = [
       'unconfigured', 'not_initialized', 'unauthorized', 'conflict', 'not_found', 'exists',
-      'duplicate_slug', 'invalid', 'schema_missing', 'verify_failed', 'network', 'unknown',
+      'duplicate_slug', 'duplicate_sku', 'invalid', 'schema_missing', 'verify_failed', 'network', 'unknown',
     ] as const;
     for (const c of codes) {
       const msg = describePersistenceError(new PersistenceError(c));
       expect(msg.length).toBeGreaterThan(10);
       expect(/[؀-ۿ]/.test(msg)).toBe(true);
     }
+  });
+
+  it('the duplicate-SKU message tells the admin what to do and that nothing was saved', () => {
+    const msg = describePersistenceError(new PersistenceError('duplicate_sku'));
+    expect(msg).toContain('SKU');
+    expect(msg).toContain('غيّره');
+    expect(msg).toContain('لم يُحفظ شيء');
   });
 
   it('states plainly when nothing was saved', () => {

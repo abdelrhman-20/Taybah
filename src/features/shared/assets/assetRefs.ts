@@ -1,6 +1,9 @@
 import { getCatalog } from '../../storefront/catalog/catalogStore';
 import { getHomeContent } from '../../storefront/home/homeStore';
 import { getOrders } from '../../storefront/checkout/orderStore';
+import { getDocsState } from '../../storefront/catalog/catalogDocs';
+import { isLocalImageRef } from './imageStore';
+import { LEGACY_KEYS } from '../../admin/migration/legacyBundle';
 
 // IMAGE REFERENCE SCAN — finds every saved entity still pointing at an image
 // ref (`media:<path>` in Storage, or a legacy `local:<id>`) before permanent
@@ -10,8 +13,37 @@ import { getOrders } from '../../storefront/checkout/orderStore';
 // while any reference remains. Variants store only the same ref string —
 // the shared file is never duplicated.
 
-export function imageReferences(ref: string): string[] {
+// Raw legacy browser data (the pre-migration catalog/attributes/menus/homepage
+// the migration tool reads). A plain substring search on purpose: it must not
+// depend on parsing succeeding or on the shape of old data.
+function legacyBrowserReferences(ref: string): string[] {
   const uses: string[] = [];
+  for (const key of Object.values(LEGACY_KEYS)) {
+    let raw: string | null;
+    try {
+      raw = localStorage.getItem(key);
+    } catch {
+      raw = null;
+    }
+    if (raw && raw.includes(ref)) uses.push(`بيانات هذا المتصفح غير المرحَّلة (${key})`);
+  }
+  return uses;
+}
+
+// Why a deletion cannot be proven safe even when no reference was found.
+// Before the catalog migration is activated the app serves the BUILT-IN demo
+// catalog, which says nothing about whether a locally stored image is used by
+// the data that still lives only in this browser — so a local image is never
+// "unused" until the migration has moved that data to the database.
+export function imageDeletionUnverifiedReason(ref: string): string | null {
+  if (isLocalImageRef(ref) && !getDocsState().initialized) {
+    return 'لم يُرحَّل الكتالوج بعد، لذلك لا يمكن التأكد من أن هذه الصورة المحلية غير مستخدمة في بياناتك المحلية. أكمل «النسخ الاحتياطي والترحيل» أولًا.';
+  }
+  return null;
+}
+
+export function imageReferences(ref: string): string[] {
+  const uses: string[] = legacyBrowserReferences(ref);
   const catalog = getCatalog();
 
   for (const p of catalog.products) {

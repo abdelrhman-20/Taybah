@@ -10,6 +10,7 @@ export type PersistenceErrorCode =
   | 'not_found' // the record no longer exists
   | 'exists' // insert of an id that already exists
   | 'duplicate_slug'
+  | 'duplicate_sku'
   | 'invalid' // server rejected the payload
   | 'schema_missing' // migration not applied
   | 'verify_failed' // write reported success but read-back disagrees
@@ -47,6 +48,7 @@ export function classifyError(error: PostgrestLike | unknown): PersistenceError 
   if (code === 'CF002') return new PersistenceError('not_found', e.details ?? '');
   if (code === 'CF003') return new PersistenceError('exists', e.details ?? '');
   if (code === 'CF004') return new PersistenceError('duplicate_slug', e.details ?? '');
+  if (code === 'CF005') return new PersistenceError('duplicate_sku', e.details ?? '');
   if (code === '22023') return new PersistenceError('invalid', e.details ?? message);
   if (code === '42501' || /permission denied|forbidden|row-level security/i.test(message)) {
     return new PersistenceError('unauthorized', detail);
@@ -81,6 +83,8 @@ export function describePersistenceError(e: unknown): string {
       return 'يوجد سجل بنفس المعرّف بالفعل. لم يُحفظ شيء.';
     case 'duplicate_slug':
       return 'الرابط (slug) مستخدم بالفعل في سجل آخر — غيّره ثم أعد المحاولة.';
+    case 'duplicate_sku':
+      return 'رمز المنتج (SKU) مستخدم بالفعل في منتج أو تنويعة أخرى (قد يكون أُضيف من تبويب أو جهاز آخر) — غيّره ثم أعد المحاولة. لم يُحفظ شيء.';
     case 'invalid':
       return 'رفض الخادم البيانات المُرسلة. تحقق من الحقول ثم أعد المحاولة.';
     case 'schema_missing':

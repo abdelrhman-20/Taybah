@@ -58,6 +58,29 @@ interface StoredObject {
   createdAt: string;
 }
 
+// SKU registry rule, mirroring catalog_normalize_sku / catalog_product_skus in
+// migration 0006: trim + lowercase, product SKU + every variant SKU, blanks ignored.
+function normSku(v: unknown): string | null {
+  const s = String(v ?? '').replace(/^\s+|\s+$/g, '').toLowerCase();
+  return s === '' ? null : s;
+}
+
+function productSkus(data: unknown): Array<{ sku: string; variantId: string | null }> {
+  const d = (data ?? {}) as { sku?: unknown; variants?: unknown };
+  const out: Array<{ sku: string; variantId: string | null }> = [];
+  const own = normSku(d.sku);
+  if (own) out.push({ sku: own, variantId: null });
+  if (Array.isArray(d.variants)) {
+    for (const v of d.variants) {
+      if (v && typeof v === 'object') {
+        const sku = normSku((v as { sku?: unknown }).sku);
+        if (sku) out.push({ sku, variantId: String((v as { id?: unknown }).id ?? '') });
+      }
+    }
+  }
+  return out;
+}
+
 class FakeBackend {
   role: Role = 'anon';
   tables: Record<string, Row[]> = {};
@@ -256,6 +279,7 @@ class FakeBackend {
     if (!Array.isArray(ops) || ops.length === 0 || ops.length > 500) return err('22023', 'invalid_ops');
     const draft = clone(this.tables.catalog_docs);
     const results: Row[] = [];
+    const putProducts: string[] = [];
     for (const op of ops) {
       const kind = op.kind as string;
       const id = op.id as string;
@@ -295,6 +319,7 @@ class FakeBackend {
           };
           results.push({ kind, id, revision: rev, deleted: false });
         }
+        if (kind === 'product') putProducts.push(id);
       } else if (op.op === 'delete') {
         if (idx >= 0) {
           if (expected !== null && draft[idx].revision !== expected) return err('CF001', 'revision_conflict', where);
@@ -307,14 +332,53 @@ class FakeBackend {
         return err('22023', 'invalid_ops');
       }
     }
+    // SKU registry: derived from the documents AFTER the whole batch applied
+    // (so SKU swaps work); any clash rejects the entire batch.
+    if (putProducts.length > 0) {
+      const owner = new Map<string, string>();
+      for (const d of draft) {
+        if (d.kind !== 'product' || putProducts.includes(d.id as string)) continue;
+        for (const { sku } of productSkus(d.data)) owner.set(sku, d.id as string);
+      }
+      for (const id of putProducts) {
+        const d = draft.find((x) => x.kind === 'product' && x.id === id);
+        if (!d) continue;
+        for (const { sku } of productSkus(d.data)) {
+          if (owner.has(sku)) {
+            return err('CF005', 'duplicate_sku', `Key (sku)=(${sku}) already exists.`);
+          }
+          owner.set(sku, id);
+        }
+      }
+    }
     this.tables.catalog_docs = draft; // commit
     return { data: results, error: null };
+  }
+
+  private skuProblem(
+    data: unknown,
+    id: string,
+    stored: (sku: string, exceptId: string) => Row | undefined,
+    batch: Map<string, string>,
+  ): { reason: 'sku_taken' | 'sku_duplicate_in_product'; sku: string } | null {
+    const skus = productSkus(data).map((x) => x.sku);
+    const dup = skus.find((s, i) => skus.indexOf(s) !== i);
+    if (dup) return { reason: 'sku_duplicate_in_product', sku: dup };
+    for (const sku of skus) {
+      if (stored(sku, id) || (batch.has(sku) && batch.get(sku) !== id)) return { reason: 'sku_taken', sku };
+    }
+    return null;
   }
 
   private catalogImport(docs: Row[], dryRun: boolean): { data: unknown; error: RpcError | null } {
     const inserted: Row[] = [];
     const unchanged: Row[] = [];
     const conflicts: Row[] = [];
+    const batch = new Map<string, string>(); // sku -> id claimed earlier in THIS call
+    const stored = (sku: string, exceptId: string) =>
+      this.tables.catalog_docs.find(
+        (r) => r.kind === 'product' && r.id !== exceptId && productSkus(r.data).some((x) => x.sku === sku),
+      );
     for (const d of docs) {
       const kind = d.kind as string;
       const id = d.id as string;
@@ -330,7 +394,11 @@ class FakeBackend {
         else conflicts.push({ kind, id, reason: 'different_data' });
       } else if (slug !== null && this.tables.catalog_docs.some((r) => r.kind === kind && r.slug === slug)) {
         conflicts.push({ kind, id, reason: 'slug_taken' });
+      } else if (kind === 'product' && this.skuProblem(d.data, id, stored, batch)) {
+        const p = this.skuProblem(d.data, id, stored, batch)!;
+        conflicts.push({ kind, id, reason: p.reason, sku: p.sku });
       } else {
+        if (kind === 'product') for (const { sku } of productSkus(d.data)) batch.set(sku, id);
         if (!dryRun) {
           this.tables.catalog_docs.push({
             kind,

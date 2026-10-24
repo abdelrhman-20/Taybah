@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowRight, Check, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useCatalog, productDocOp } from '../../storefront/catalog/catalogStore';
-import { docRevision, writeDocs, type DocOp } from '../../storefront/catalog/catalogDocs';
+import {
+  docRevision,
+  getDocsState,
+  subscribeDocs,
+  writeDocs,
+  type DocOp,
+} from '../../storefront/catalog/catalogDocs';
+import { supabaseConfigured } from '../../../lib/supabase/client';
+import { describePersistenceError, PersistenceError } from '../../../lib/persistence/errors';
 import { useSaveAction } from '../hooks/useSaveAction';
 import { generateId } from '../../shared/utils/id';
 import {
@@ -195,6 +203,16 @@ export function ProductFormPage() {
   const save = useSaveAction();
   const managerSave = useSaveAction();
   const valueDelete = useSaveAction();
+  // Option/dimension edits are database writes. Before the catalog migration is
+  // activated they are refused (and the product on screen is the built-in demo
+  // copy, not the browser's own data), so say so UP FRONT and disable the
+  // controls instead of letting the admin do the work and fail on save.
+  const docsState = useSyncExternalStore(subscribeDocs, getDocsState);
+  const optionsBlock: string | null = !supabaseConfigured
+    ? describePersistenceError(new PersistenceError('unconfigured'))
+    : docsState.status === 'ready' && !docsState.initialized
+      ? describePersistenceError(new PersistenceError('not_initialized'))
+      : null;
   // A new product's id is fixed for the life of the form, so a retry after a
   // failed attempt can never create a second record.
   const [newProductId] = useState(() => generateId());
@@ -1036,6 +1054,18 @@ export function ProductFormPage() {
             <p className="mt-1 text-xs leading-5 text-espresso/55">
               علّم «للمنتج» لاختيار القيمة لهذا المنتج، عدّل الاسم أو التفعيل، أضف قيمة جديدة، أو احذف نهائيًا — «حفظ التعديلات» تطبّق الاختيار والتعديلات معًا، والحذف يسأل تأكيدًا أولًا.
             </p>
+            {optionsBlock && (
+              <div role="alert" className="mt-3 rounded border border-burgundy/30 bg-burgundy/5 p-3 text-xs leading-6 text-espresso">
+                <p className="font-medium text-burgundy">{optionsBlock}</p>
+                <p className="mt-1 text-espresso/70">
+                  هذا المنتج معروض من الكتالوج المدمج وليس من بيانات متصفحك، ولا تُحفظ التعديلات في المتصفح عمدًا حتى
+                  لا تتعارض مع بياناتك المحلية عند الترحيل. بياناتك المحلية لم تُمَسّ.
+                </p>
+                <Link to="/admin/migration" className="mt-1 inline-block font-medium text-burgundy underline-offset-4 hover:underline">
+                  فتح النسخ الاحتياطي والترحيل
+                </Link>
+              </div>
+            )}
             <ul className="mt-4 max-h-72 space-y-2 overflow-y-auto pl-1">
               {(attributeByKey(managerAttr)?.values ?? []).map((v) => {
                 const fieldKey = ATTR_FIELD[managerAttr];
@@ -1111,6 +1141,7 @@ export function ProductFormPage() {
                         setDelValue({ attrKey: managerAttr, valueKey: v.key })
                       }
                       aria-label={`حذف ${v.label.ar}`}
+                      disabled={optionsBlock !== null}
                       className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-espresso/50 transition hover:bg-burgundy/10 hover:text-burgundy focus-visible:outline-2 focus-visible:outline-burgundy"
                     >
                       <Trash2 className="size-4" aria-hidden />
@@ -1206,6 +1237,7 @@ export function ProductFormPage() {
                 <button
                   type="button"
                   onClick={addManagerValue}
+                  disabled={optionsBlock !== null || managerSave.busy}
                   className="inline-flex items-center gap-1.5 rounded border border-espresso/25 px-3 py-2 text-xs font-medium text-espresso transition hover:border-burgundy hover:text-burgundy focus-visible:outline-2 focus-visible:outline-burgundy"
                 >
                   <Plus className="size-3.5" aria-hidden /> إضافة
@@ -1237,7 +1269,7 @@ export function ProductFormPage() {
               <button
                 type="button"
                 onClick={saveManager}
-                disabled={managerSave.busy}
+                disabled={managerSave.busy || optionsBlock !== null}
                 className="rounded bg-burgundy px-5 py-2 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
               >
                 {managerSave.busy ? 'جارٍ الحفظ…' : 'حفظ التعديلات'}

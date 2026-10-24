@@ -3,7 +3,7 @@ import { Copy, Search, Trash2 } from 'lucide-react';
 import { deleteImageAsset } from '../../shared/assets/imageStore';
 import { deleteRemoteImage, mediaPath } from '../../shared/assets/mediaStorage';
 import { notifyMediaChanged, useMediaLibrary } from '../../shared/assets/mediaLibrary';
-import { imageReferences } from '../../shared/assets/assetRefs';
+import { imageDeletionUnverifiedReason, imageReferences } from '../../shared/assets/assetRefs';
 import { describePersistenceError } from '../../../lib/persistence/errors';
 import { AssetImage } from '../../shared/components/AssetImage';
 import { ImageUploadField } from '../components/ImageUploadField';
@@ -45,7 +45,8 @@ export function AdminMediaPage() {
 
   const delTarget = del ? (assets ?? []).find((a) => a.ref === del) : undefined;
   const refs = del ? imageReferences(del) : [];
-  const blocked = refs.length > 0;
+  const unverified = del ? imageDeletionUnverifiedReason(del) : null;
+  const blocked = refs.length > 0 || unverified !== null;
 
   const copyRef = async (ref: string) => {
     try {
@@ -184,7 +185,9 @@ export function AdminMediaPage() {
         body={
           delTarget
             ? blocked
-              ? `«${delTarget.name}» مستخدمة في: ${refs.join('، ')}. استبدل تلك المراجع أو أزلها أولًا، ثم أعد المحاولة.`
+              ? refs.length > 0
+                ? `«${delTarget.name}» مستخدمة في: ${refs.join('، ')}. استبدل تلك المراجع أو أزلها أولًا، ثم أعد المحاولة.`
+                : `«${delTarget.name}»: ${unverified}`
               : `حذف «${delTarget.name}» نهائيًا ${delTarget.origin === 'remote' ? 'من الخادم' : 'من التخزين المحلي لهذا المتصفح'}؟ لا توجد مراجع إليها — لا يمكن التراجع.`
             : ''
         }

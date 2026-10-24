@@ -247,6 +247,21 @@ describe('catalogDocs — writing', () => {
     expect(docs.getDoc('product', 'p1')?.revision).toBe(2);
   });
 
+  it('STALE TAB + SKU: another tab created a product with the same SKU; this tab is refused (duplicate_sku) and then resyncs', async () => {
+    const b = await freshBackend('admin');
+    seedCatalog(b, [product('p1', { sku: 'ACME-1' })]);
+    const docs = await load();
+    // another tab creates a product this tab has never seen
+    b.putDoc('product', 'from-other-tab', product('from-other-tab', { sku: 'SHARED-9' }), { slug: 'slug-other' });
+    expect(docs.getDoc('product', 'from-other-tab')).toBeUndefined(); // not known here
+
+    await expect(
+      docs.writeDocs([putOp('mine', { sku: ' shared-9 ' })]),
+    ).rejects.toMatchObject({ code: 'duplicate_sku' });
+    expect(b.tables.catalog_docs.some((d) => d.id === 'mine')).toBe(false);
+    await vi_waitFor(() => docs.getDoc('product', 'from-other-tab') !== undefined); // resynced
+  });
+
   it('LOST RESPONSE: a write the server applied but whose answer never arrived is reported as a network error, then local state resyncs to what is really saved', async () => {
     const b = await freshBackend('admin');
     seedCatalog(b, [product('p1')]);

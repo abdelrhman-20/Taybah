@@ -308,11 +308,15 @@ async function doWrite(ops: DocOp[]): Promise<void> {
       err.code === 'conflict' ||
       err.code === 'not_found' ||
       err.code === 'exists' ||
+      err.code === 'duplicate_slug' ||
+      err.code === 'duplicate_sku' ||
       err.code === 'network'
     ) {
       // Catch local state up. For `network` this matters most: the write may
       // have been applied even though its response never arrived, and the
-      // admin must then see what is actually saved.
+      // admin must then see what is actually saved. For a SKU/slug clash the
+      // tab evidently did not know about the other record: refreshing lets the
+      // form's own duplicate check see it on the next attempt.
       void refreshDocs();
     }
     throw err;

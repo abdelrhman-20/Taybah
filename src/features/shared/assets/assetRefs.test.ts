@@ -237,3 +237,38 @@ describe('media: refs (Supabase Storage)', () => {
     expect(refs.imageReferences('media:uploads/brand.webp')).toEqual([expect.stringContaining('العلامة')]);
   });
 });
+
+describe('deleting a LOCAL image before the catalog is migrated', () => {
+  async function uninitialized() {
+    const s = await stores();
+    s.b.setInitialized(false);
+    const docs = await import('../../storefront/catalog/catalogDocs');
+    await docs.refreshDocs();
+    return s;
+  }
+
+  it('the built-in demo catalog is never proof that a local image is unused: deletion is unverified', async () => {
+    const { refs } = await uninitialized();
+    expect(refs.imageReferences('local:asset-9')).toEqual([]); // demo catalog does not use it...
+    expect(refs.imageDeletionUnverifiedReason('local:asset-9')).toContain('لم يُرحَّل الكتالوج بعد'); // ...but that proves nothing
+  });
+
+  it('after the migration is activated the normal reference scan decides', async () => {
+    const { refs } = await stores(); // initialized
+    expect(refs.imageDeletionUnverifiedReason('local:asset-9')).toBeNull();
+  });
+
+  it('a media: (server) image is not affected by this rule', async () => {
+    const { refs } = await uninitialized();
+    expect(refs.imageDeletionUnverifiedReason('media:uploads/x.webp')).toBeNull();
+  });
+
+  it('un-migrated browser data that still uses the image counts as a reference, even after activation', async () => {
+    const { refs } = await stores();
+    storage.setItem('taybah:catalog', JSON.stringify({ products: [{ id: 'old', image: 'local:asset-7' }] }));
+    storage.setItem('taybah:homepage', 'not even valid json … local:asset-8 …');
+    expect(refs.imageReferences('local:asset-7')).toEqual([expect.stringContaining('taybah:catalog')]);
+    expect(refs.imageReferences('local:asset-8')).toEqual([expect.stringContaining('taybah:homepage')]); // no parsing needed
+    expect(refs.imageReferences('local:asset-6')).toEqual([]);
+  });
+});

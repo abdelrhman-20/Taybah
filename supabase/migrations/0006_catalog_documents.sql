@@ -81,6 +81,61 @@ create policy "public can read catalog flag" on public.app_settings
   for select using (key = 'catalog_initialized' or public.is_admin());
 
 -- ============================================================================
+-- 2b. SKU registry — database-enforced global SKU uniqueness
+-- ============================================================================
+-- Product SKUs and every variant SKU (active or not) share ONE namespace,
+-- compared after trim + lowercase — exactly the app's skuTaken()/normalizeSku()
+-- rule. The registry is written ONLY by catalog_write / catalog_import
+-- (SECURITY DEFINER); clients cannot touch it. Its primary key is what makes
+-- the rule safe under concurrency: two transactions claiming the same SKU
+-- cannot both commit (the second waits for the first, then fails with a
+-- unique violation, which catalog_write reports as CF005 duplicate_sku).
+-- The foreign key frees a product's SKUs automatically when it is deleted.
+
+create or replace function public.catalog_normalize_sku(p text)
+returns text
+language sql
+immutable
+as $$
+  select nullif(lower(regexp_replace(coalesce(p, ''), '^\s+|\s+$', '', 'g')), '')
+$$;
+
+-- Every non-empty normalized SKU in a product document: its own (variant_id
+-- null) plus one per variant. Malformed variants are ignored, never an error.
+create or replace function public.catalog_product_skus(p_data jsonb)
+returns table (sku text, variant_id text)
+language sql
+immutable
+as $$
+  select public.catalog_normalize_sku(p_data ->> 'sku') as sku, null::text as variant_id
+   where public.catalog_normalize_sku(p_data ->> 'sku') is not null
+  union all
+  select public.catalog_normalize_sku(v ->> 'sku'), v ->> 'id'
+    from jsonb_array_elements(
+           case when jsonb_typeof(p_data -> 'variants') = 'array'
+                then p_data -> 'variants' else '[]'::jsonb end
+         ) v
+   where jsonb_typeof(v) = 'object'
+     and public.catalog_normalize_sku(v ->> 'sku') is not null
+$$;
+
+create table if not exists public.catalog_skus (
+  sku text primary key,
+  kind text not null default 'product' check (kind = 'product'),
+  product_id text not null,
+  variant_id text,
+  foreign key (kind, product_id) references public.catalog_docs (kind, id) on delete cascade
+);
+
+create index if not exists catalog_skus_product_idx on public.catalog_skus (product_id);
+
+alter table public.catalog_skus enable row level security;
+-- Deny-all for API roles: no policies, and no table privileges either.
+revoke all on table public.catalog_skus from anon, authenticated;
+revoke execute on function public.catalog_normalize_sku(text) from public, anon, authenticated;
+revoke execute on function public.catalog_product_skus(jsonb) from public, anon, authenticated;
+
+-- ============================================================================
 -- 3. catalog_write — atomic, revision-checked, admin-only
 -- ============================================================================
 -- p_ops: [{ "op": "put",    "kind", "id", "expected_revision": null|int,
@@ -90,7 +145,8 @@ create policy "public can read catalog flag" on public.app_settings
 -- Returns [{ kind, id, revision, deleted }] in op order.
 -- Errors (SQLSTATE / message):
 --   42501 forbidden · 22023 invalid_ops · CF001 revision_conflict ·
---   CF002 not_found · CF003 already_exists · CF004 duplicate_slug
+--   CF002 not_found · CF003 already_exists · CF004 duplicate_slug ·
+--   CF005 duplicate_sku
 
 create or replace function public.catalog_write(p_ops jsonb)
 returns jsonb
@@ -106,6 +162,8 @@ declare
   v_rev integer;
   v_results jsonb := '[]'::jsonb;
   v_constraint text;
+  v_put_products text[] := '{}';
+  v_detail text;
 begin
   if not public.is_admin() then
     raise exception 'forbidden' using errcode = '42501';
@@ -157,6 +215,9 @@ begin
         end if;
         raise exception 'already_exists' using errcode = 'CF003', detail = v_kind || '/' || v_id;
       end;
+      if v_kind = 'product' then
+        v_put_products := v_put_products || v_id;
+      end if;
       v_results := v_results || jsonb_build_object('kind', v_kind, 'id', v_id, 'revision', v_rev, 'deleted', false);
 
     elsif op ->> 'op' = 'delete' then
@@ -176,6 +237,25 @@ begin
     end if;
   end loop;
 
+  -- SKU registry: after ALL documents of the batch are written, replace the
+  -- registry rows of every product that was written, in one pass. Doing it
+  -- last (not per operation) lets two products swap SKUs inside one batch.
+  -- Products deleted in this batch were already released by the foreign key.
+  -- A clash rolls back the entire batch (this function is one statement).
+  if array_length(v_put_products, 1) is not null then
+    begin
+      delete from public.catalog_skus where product_id = any (v_put_products);
+      insert into public.catalog_skus (sku, product_id, variant_id)
+      select s.sku, d.id, s.variant_id
+        from public.catalog_docs d
+        cross join lateral public.catalog_product_skus(d.data) s
+       where d.kind = 'product' and d.id = any (v_put_products);
+    exception when unique_violation then
+      get stacked diagnostics v_detail = pg_exception_detail;
+      raise exception 'duplicate_sku' using errcode = 'CF005', detail = coalesce(v_detail, '');
+    end;
+  end if;
+
   return v_results;
 end;
 $$;
@@ -186,7 +266,10 @@ $$;
 -- p_docs: [{ kind, id, slug, visible, sort_order, data }]
 -- Absent  -> inserted (unless dry run)
 -- Present and identical -> unchanged
--- Present and different, or slug used by another id -> conflict (untouched)
+-- Present and different, slug used by another id, or a SKU already owned by
+-- another product (or repeated inside the batch / inside the product)
+--   -> conflict (the existing record is never touched). Reasons:
+--   different_data · slug_taken · sku_taken · sku_duplicate_in_product
 -- Safe to re-run any number of times. Does NOT flip the cutover flag.
 
 create or replace function public.catalog_import(p_docs jsonb, p_dry_run boolean default true)
@@ -204,6 +287,13 @@ declare
   v_inserted jsonb := '[]'::jsonb;
   v_unchanged jsonb := '[]'::jsonb;
   v_conflicts jsonb := '[]'::jsonb;
+  v_skus text[];
+  v_reason text;
+  v_clash text;
+  v_batch_skus jsonb := '{}'::jsonb;  -- sku -> id of the document that claimed it in THIS call
+  v_constraint text;
+  v_failed boolean;
+  s text;
 begin
   if not public.is_admin() then
     raise exception 'forbidden' using errcode = '42501';
@@ -216,6 +306,9 @@ begin
     v_kind := d ->> 'kind';
     v_id := d ->> 'id';
     v_slug := nullif(d ->> 'slug', '');
+    v_reason := null;
+    v_clash := null;
+    v_failed := false;
 
     select * into v_existing from public.catalog_docs where kind = v_kind and id = v_id;
     if found then
@@ -226,12 +319,54 @@ begin
       else
         v_conflicts := v_conflicts || jsonb_build_object('kind', v_kind, 'id', v_id, 'reason', 'different_data');
       end if;
-    elsif v_slug is not null and exists (
+      continue;
+    end if;
+
+    if v_slug is not null and exists (
       select 1 from public.catalog_docs where kind = v_kind and slug = v_slug
     ) then
       v_conflicts := v_conflicts || jsonb_build_object('kind', v_kind, 'id', v_id, 'reason', 'slug_taken');
-    else
-      if not p_dry_run then
+      continue;
+    end if;
+
+    -- SKU checks for products that WOULD be inserted. Existing products are
+    -- never touched, so their SKUs are only ever compared against.
+    if v_kind = 'product' then
+      select coalesce(array_agg(x.sku), '{}') into v_skus
+        from public.catalog_product_skus(d -> 'data') x;
+
+      -- (1) the document repeats a SKU itself (own SKU vs a variant, or two variants)
+      select u.sku into v_clash
+        from unnest(v_skus) as u(sku) group by u.sku having count(*) > 1 limit 1;
+      if v_clash is not null then
+        v_reason := 'sku_duplicate_in_product';
+      else
+        -- (2) a stored product already owns one of these SKUs
+        select k.sku into v_clash from public.catalog_skus k
+         where k.sku = any (v_skus) and k.product_id <> v_id limit 1;
+        if v_clash is not null then
+          v_reason := 'sku_taken';
+        else
+          -- (3) an earlier document of THIS import claimed it (keeps dry runs accurate)
+          select u.sku into v_clash from unnest(v_skus) as u(sku)
+           where (v_batch_skus ->> u.sku) is not null and (v_batch_skus ->> u.sku) <> v_id limit 1;
+          if v_clash is not null then
+            v_reason := 'sku_taken';
+          end if;
+        end if;
+      end if;
+    end if;
+
+    if v_reason is not null then
+      v_conflicts := v_conflicts || jsonb_build_object('kind', v_kind, 'id', v_id, 'reason', v_reason, 'sku', v_clash);
+      continue;
+    end if;
+
+    if not p_dry_run then
+      -- Own subtransaction: if a concurrent writer wins a slug/SKU between the
+      -- checks above and here, BOTH inserts roll back and it is reported as a
+      -- conflict instead of aborting the whole import.
+      begin
         insert into public.catalog_docs (kind, id, slug, visible, sort_order, data)
         values (
           v_kind, v_id, v_slug,
@@ -239,6 +374,25 @@ begin
           coalesce((d ->> 'sort_order')::integer, 0),
           d -> 'data'
         );
+        if v_kind = 'product' then
+          insert into public.catalog_skus (sku, product_id, variant_id)
+          select x.sku, v_id, x.variant_id from public.catalog_product_skus(d -> 'data') x;
+        end if;
+      exception when unique_violation then
+        get stacked diagnostics v_constraint = constraint_name;
+        v_failed := true;
+        v_conflicts := v_conflicts || jsonb_build_object(
+          'kind', v_kind, 'id', v_id,
+          'reason', case when v_constraint = 'catalog_skus_pkey' then 'sku_taken' else 'slug_taken' end
+        );
+      end;
+    end if;
+
+    if not v_failed then
+      if v_kind = 'product' then
+        foreach s in array v_skus loop
+          v_batch_skus := v_batch_skus || jsonb_build_object(s, v_id);
+        end loop;
       end if;
       v_inserted := v_inserted || jsonb_build_object('kind', v_kind, 'id', v_id);
     end if;
@@ -289,6 +443,43 @@ begin
 end;
 $$;
 
+-- Registry backfill for product documents that exist without registry rows
+-- (e.g. a database that ran an earlier revision of this migration). Idempotent.
+-- Duplicates already present in the data cannot be registered twice: they are
+-- reported, NOT silently dropped or rewritten — fix them, then re-run this block.
+do $$
+declare
+  v_dups text;
+begin
+  select string_agg(q.sku || ' (' || q.owners || ')', '; ') into v_dups
+    from (
+      select s.sku, string_agg(d.id, ', ') as owners
+        from public.catalog_docs d
+        cross join lateral public.catalog_product_skus(d.data) s
+       where d.kind = 'product'
+       group by s.sku
+      having count(*) > 1
+    ) q;
+  if v_dups is not null then
+    raise notice 'catalog_skus backfill: DUPLICATE SKUs already exist in catalog_docs and were NOT registered: %', v_dups;
+  end if;
+
+  insert into public.catalog_skus (sku, product_id, variant_id)
+  select s.sku, d.id, s.variant_id
+    from public.catalog_docs d
+    cross join lateral public.catalog_product_skus(d.data) s
+   where d.kind = 'product'
+     and s.sku not in (
+       select sku from (
+         select s2.sku from public.catalog_docs d2
+           cross join lateral public.catalog_product_skus(d2.data) s2
+          where d2.kind = 'product' group by s2.sku having count(*) > 1
+       ) dup
+     )
+  on conflict (sku) do nothing;
+end;
+$$;
+
 revoke execute on function public.catalog_write(jsonb) from public, anon;
 revoke execute on function public.catalog_import(jsonb, boolean) from public, anon;
 revoke execute on function public.catalog_mark_initialized() from public, anon;
@@ -307,4 +498,6 @@ grant execute on function public.catalog_unmark_initialized() to authenticated;
 --   drop function if exists public.catalog_import(jsonb, boolean);
 --   drop function if exists public.catalog_write(jsonb);
 --   drop table if exists public.app_settings;
+--   drop table if exists public.catalog_skus;   -- derived data; rebuilt by the backfill block
+--   drop function if exists public.catalog_product_skus(jsonb), public.catalog_normalize_sku(text);
 --   drop table if exists public.catalog_docs;   -- DESTROYS saved catalog data: export first

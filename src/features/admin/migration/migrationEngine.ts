@@ -22,6 +22,7 @@ import {
   verifyObject,
 } from '../../shared/assets/mediaStorage';
 import { localImageRef } from '../../shared/assets/imageStore';
+import { normalizeSku } from '../../storefront/catalog/variants';
 import type { LegacySource, ParsedLegacy } from './legacyBundle';
 
 // The migration pipeline (pure planning + the steps the admin page runs).
@@ -52,8 +53,16 @@ export interface ImportReport {
   dryRun: boolean;
   inserted: DocRef[];
   unchanged: DocRef[];
-  conflicts: Array<DocRef & { reason: 'different_data' | 'slug_taken' }>;
+  conflicts: Array<DocRef & { reason: ConflictReason; sku?: string }>;
 }
+
+export type ConflictReason =
+  | 'different_data'
+  | 'slug_taken'
+  | 'sku_taken'
+  | 'sku_duplicate_in_product';
+
+export const isSkuConflict = (reason: ConflictReason): boolean => reason.startsWith('sku_');
 
 // ---- image references -------------------------------------------------------------
 
@@ -108,9 +117,135 @@ export interface MigrationPlan {
   // local refs used by records (for the report)
   referencedLocalRefs: string[];
   counts: Record<DocKind, number>;
+  // SKUs that appear more than once inside the data being migrated. The
+  // database enforces global SKU uniqueness, so these cannot be imported until
+  // the admin chooses new values (see skuOverrides).
+  skuProblems: SkuProblem[];
 }
 
-export function buildPlan(parsed: ParsedLegacy, source: LegacySource): MigrationPlan {
+// ---- SKU resolution ---------------------------------------------------------------
+// The old rule ("a SKU is unique") only lived in the product form, so legacy
+// browser data can contain duplicates. NOTHING is renamed automatically: each
+// offending SKU is listed and the admin types a replacement, which is applied
+// to the IMPORTED copy only — the backup ZIP keeps the original values.
+
+// Key: the product id, or `${productId}:${variantId}` for a variant SKU.
+export type SkuOverrides = Record<string, string>;
+
+export const skuKey = (productId: string, variantId: string | null): string =>
+  variantId === null ? productId : `${productId}:${variantId}`;
+
+export interface SkuOccurrence {
+  productId: string;
+  productName: string;
+  variantId: string | null;
+  sku: string; // as written (not normalized)
+}
+
+export interface SkuProblem {
+  sku: string; // normalized
+  occurrences: SkuOccurrence[];
+}
+
+function occurrencesOf(docs: DocInput[]): SkuOccurrence[] {
+  const out: SkuOccurrence[] = [];
+  for (const d of docs) {
+    if (d.kind !== 'product') continue;
+    const data = d.data as { sku?: unknown; name?: { ar?: unknown }; variants?: unknown };
+    const name = typeof data.name?.ar === 'string' ? data.name.ar : d.id;
+    if (typeof data.sku === 'string' && normalizeSku(data.sku)) {
+      out.push({ productId: d.id, productName: name, variantId: null, sku: data.sku });
+    }
+    if (Array.isArray(data.variants)) {
+      for (const v of data.variants as Array<{ id?: unknown; sku?: unknown }>) {
+        if (v && typeof v.sku === 'string' && normalizeSku(v.sku)) {
+          out.push({ productId: d.id, productName: name, variantId: String(v.id ?? ''), sku: v.sku });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Same rule as the database registry: trim + lowercase, product and variant
+// SKUs in one namespace, blanks ignored.
+export function findSkuProblems(docs: DocInput[]): SkuProblem[] {
+  const groups = new Map<string, SkuOccurrence[]>();
+  for (const o of occurrencesOf(docs)) {
+    const k = normalizeSku(o.sku);
+    groups.set(k, [...(groups.get(k) ?? []), o]);
+  }
+  return [...groups.entries()]
+    .filter(([, occ]) => occ.length > 1)
+    .map(([sku, occurrences]) => ({ sku, occurrences }));
+}
+
+export interface SkuRow extends SkuOccurrence {
+  key: string;
+  reason: 'duplicate_in_data' | 'taken_in_database';
+}
+
+// Which SKU values the admin must replace. For duplicates inside the data the
+// FIRST occurrence keeps its value and every later one needs a new one; for a
+// SKU the database already assigns to another product, the incoming
+// occurrence(s) need a new one (the stored product is never changed).
+export function skuRowsNeedingNewValue(
+  base: MigrationPlan,
+  serverConflicts: ReadonlyArray<{ id: string; reason: ConflictReason; sku?: string }>,
+): SkuRow[] {
+  const rows = new Map<string, SkuRow>();
+  for (const p of base.skuProblems) {
+    p.occurrences.slice(1).forEach((o) => {
+      const key = skuKey(o.productId, o.variantId);
+      rows.set(key, { ...o, key, reason: 'duplicate_in_data' });
+    });
+  }
+  const all = occurrencesOf(base.docs);
+  for (const c of serverConflicts) {
+    if (c.reason !== 'sku_taken' || !c.sku) continue;
+    for (const o of all) {
+      if (o.productId === c.id && normalizeSku(o.sku) === c.sku) {
+        const key = skuKey(o.productId, o.variantId);
+        if (!rows.has(key)) rows.set(key, { ...o, key, reason: 'taken_in_database' });
+      }
+    }
+  }
+  return [...rows.values()];
+}
+
+function applySkuOverrides(
+  productId: string,
+  data: Record<string, unknown>,
+  overrides: SkuOverrides,
+): Record<string, unknown> {
+  // A blank replacement means "not resolved yet" — it must never blank a SKU.
+  const pick = (key: string): string | undefined => {
+    const v = overrides[key];
+    return v !== undefined && normalizeSku(v) !== '' ? v.trim() : undefined;
+  };
+  const own = pick(skuKey(productId, null));
+  const variants = Array.isArray(data.variants) ? (data.variants as Array<Record<string, unknown>>) : null;
+  const touchesVariant = variants?.some((v) => pick(skuKey(productId, String(v.id ?? ''))) !== undefined);
+  if (own === undefined && !touchesVariant) return data;
+  return {
+    ...data,
+    ...(own !== undefined ? { sku: own } : {}),
+    ...(variants
+      ? {
+          variants: variants.map((v) => {
+            const o = pick(skuKey(productId, String(v.id ?? '')));
+            return o === undefined ? v : { ...v, sku: o };
+          }),
+        }
+      : {}),
+  };
+}
+
+export function buildPlan(
+  parsed: ParsedLegacy,
+  source: LegacySource,
+  skuOverrides: SkuOverrides = {},
+): MigrationPlan {
   const images: ImagePlanItem[] = source.bundle.images
     .filter((i) => source.blobs.has(i.id))
     .map((i) => {
@@ -135,7 +270,11 @@ export function buildPlan(parsed: ParsedLegacy, source: LegacySource): Migration
       slug: p.slug,
       visible: p.published,
       sort_order: i,
-      data: rewriteLocalRefs(p as unknown as Record<string, unknown>, refMap),
+      data: applySkuOverrides(
+        p.id,
+        rewriteLocalRefs(p as unknown as Record<string, unknown>, refMap),
+        skuOverrides,
+      ),
     }),
   );
   for (const c of parsed.categories) {
@@ -211,6 +350,7 @@ export function buildPlan(parsed: ParsedLegacy, source: LegacySource): Migration
     missingImageRefs: [...remaining].sort(),
     referencedLocalRefs: [...referenced].sort(),
     counts,
+    skuProblems: findSkuProblems(docs),
   };
 }
 

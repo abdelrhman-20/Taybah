@@ -87,9 +87,17 @@ revision for concurrency). The 0003 catalog tables remain, unused and empty.
   that check `is_admin()` themselves.
 * `catalog_write(ops)` applies many records in **one transaction**, each with an
   `expected_revision`; stale writes fail (`CF001`), missing records `CF002`,
-  duplicate ids `CF003`, duplicate slugs `CF004`. No zero-row silent successes.
+  duplicate ids `CF003`, duplicate slugs `CF004`, duplicate SKUs `CF005`.
+  No zero-row silent successes.
 * `catalog_import(docs, dry_run)` is idempotent and **never overwrites**:
-  differing records and taken slugs are returned as conflicts.
+  differing records, taken slugs and taken/duplicated SKUs are returned as
+  conflicts.
+* SKU uniqueness is enforced in the database by the `catalog_skus` registry
+  (product + variant SKUs, one namespace, trim + lowercase). It is written only
+  by the RPCs; its primary key makes two concurrent claims impossible — the
+  loser gets `CF005`/`sku_taken`. Products whose import is blocked by a SKU
+  clash are resolved explicitly in the migration UI (the admin types the
+  replacement; the backup keeps the originals).
 * `app_settings.catalog_initialized` is the cutover flag. Until an admin has
   imported **and verified** the catalog and flipped it, the storefront serves
   the built-in catalog and admin catalog edits are refused. `catalog_unmark_initialized()`
@@ -149,9 +157,9 @@ production end-to-end checklist in the runbook.
 
 ## 6. Known limitations / residual risks
 
-* Product-level SKU uniqueness is validated in the form but not enforced by the
-  database (variant SKUs live inside documents). Two admins creating the same
-  SKU at the same instant could both succeed.
+* SKU uniqueness is enforced by the `catalog_skus` registry inside the write
+  RPCs. The form still pre-checks for a friendly message, and a refused write
+  resyncs the tab so the second attempt is caught locally.
 * Orders have no per-row revision; the status update is conditional on the
   status the admin was looking at (`expectedStatus`).
 * Image uploads happen when a file is chosen, before the record is saved; if

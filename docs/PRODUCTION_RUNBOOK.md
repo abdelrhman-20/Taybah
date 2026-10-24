@@ -139,7 +139,7 @@ delete from public.app_settings where key = 'catalog_initialized';
 The storefront returns to the built-in catalog; no data is deleted. A full
 removal is only for an empty/abandoned migration (this **destroys saved
 catalog data** — export first):
-`drop function public.catalog_unmark_initialized(), public.catalog_mark_initialized(), public.catalog_import(jsonb, boolean), public.catalog_write(jsonb); drop table public.app_settings, public.catalog_docs;`
+`drop function public.catalog_unmark_initialized(), public.catalog_mark_initialized(), public.catalog_import(jsonb, boolean), public.catalog_write(jsonb), public.catalog_product_skus(jsonb), public.catalog_normalize_sku(text); drop table public.app_settings, public.catalog_skus, public.catalog_docs;`
 
 Local browser data is untouched by every step above. Delete it only after
 Phase A is verified **and** you are happy with the backup.
@@ -233,6 +233,15 @@ create policy "staff can update orders" on public.orders for update to authentic
 create policy "staff can read order status history" on public.order_status_history for select to authenticated using (true);
 -- optional, destroys the email log:  drop table public.order_email_outbox cascade;
 ```
+
+**Warning — rollback stops order emails.** `0005` dropped the old `0002`
+trigger (`order_status_history_notify_email`). The block above removes the new
+outbox trigger but recreates nothing, so after a rollback **no order-status
+emails are sent at all** until you either re-apply `0005`, or re-run
+`supabase/migrations/0002_order_status_email_trigger.sql` to reinstall the old
+trigger. The 0002 path only works while the old `send-order-status-email`
+Edge Function is still deployed — which is why Phase E deletes it **only**
+after Phase D has verified the replacement end to end.
 
 ---
 
