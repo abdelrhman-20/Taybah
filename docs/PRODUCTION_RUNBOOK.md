@@ -289,8 +289,13 @@ GitHub secret `VITE_SUPABASE_ANON_KEY`, then redeploying Pages.
 * **Only the anon/publishable key belongs there.** Never put the service-role
   key, `RESEND_API_KEY` or `ORDER_EMAIL_WORKER_SECRET` in Vite env or GitHub
   Pages secrets.
-* The workflow does **not** run tests. Recommended addition before the build:
-  `- run: npm test`.
+* The workflow now runs `npm test` before the build (added on this branch, not
+  yet on `main`), so a failing suite blocks the deploy. The suite uses PGlite
+  and mocks only; it never contacts Supabase. If a timing-sensitive
+  `CheckoutPage` test flakes in CI, re-run the job before changing code.
+* `0006` needs only `0001` + `0003`; `0005` needs `0001` + `0003` and at least
+  one row in `public.admins` (it aborts otherwise). They are independent: apply
+  `0006` first, `0005` only in Phase C.
 * One session at a time should commit/push to `main`; the Pages deploy is
   triggered by any push.
 
