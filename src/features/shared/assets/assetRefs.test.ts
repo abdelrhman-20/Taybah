@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogProduct } from '../../storefront/catalog/catalogData';
 import type { GuestOrder, OrderLine } from '../../storefront/checkout/orderStore';
+import { catalogCategories, catalogCollections } from '../../storefront/catalog/catalogData';
+import { freshBackend } from '../../../test/harness';
 
 // Dedicated coverage for the image-reference scan that gates media-library
 // deletion — mirrors attributeStore.ts's reference-scanning tests. Pure
-// logic over catalogStore/homeStore/orderStore; no IndexedDB involved.
+// logic over catalogStore/homeStore/orderStore against the FAKE backend
+// (client.mock.ts); no IndexedDB or Storage involved. imageReferences takes
+// the full image ref string (`local:<id>` legacy or `media:<path>`).
 
 function memoryStorage(): Storage {
   const m = new Map<string, string>();
@@ -23,13 +27,21 @@ function memoryStorage(): Storage {
 let storage: Storage;
 
 async function stores() {
-  vi.resetModules();
+  const b = await freshBackend('admin');
   vi.stubGlobal('localStorage', storage);
+  const docs = await import('../../storefront/catalog/catalogDocs');
   const catalog = await import('../../storefront/catalog/catalogStore');
   const orders = await import('../../storefront/checkout/orderStore');
   const home = await import('../../storefront/home/homeStore');
   const refs = await import('./assetRefs');
-  return { catalog, orders, home, refs };
+  await docs.whenDocsSettled();
+  await home.refreshHomeContent();
+  // As after a completed migration: initialized catalog with the built-in taxonomy.
+  b.setInitialized(true);
+  for (const c of catalogCategories) b.putDoc('category', c.slug, c, { slug: c.slug, visible: c.visible, sort_order: c.order });
+  for (const c of catalogCollections) b.putDoc('collection', c.slug, c, { slug: c.slug, visible: c.visible, sort_order: c.order });
+  await docs.refreshDocs();
+  return { b, catalog, orders, home, refs };
 }
 
 beforeEach(() => {
@@ -97,27 +109,27 @@ const order = (lines: OrderLine[], ref = 'TYB-2025-TEST'): GuestOrder => ({
 describe('imageReferences', () => {
   it('returns no references for an asset nothing points to', async () => {
     const { refs } = await stores();
-    expect(refs.imageReferences('unused-asset')).toEqual([]);
+    expect(refs.imageReferences('local:unused-asset')).toEqual([]);
   });
 
   it('detects a product\'s primary image', async () => {
     const { catalog, refs } = await stores();
-    catalog.upsertProduct(product({ image: 'local:asset-1' }));
-    expect(refs.imageReferences('asset-1')).toEqual([expect.stringContaining('سجادة اختبار')]);
+    await catalog.upsertProduct(product({ image: 'local:asset-1' }));
+    expect(refs.imageReferences('local:asset-1')).toEqual([expect.stringContaining('سجادة اختبار')]);
   });
 
   it('detects a product\'s hover image and gallery images independently', async () => {
     const { catalog, refs } = await stores();
-    catalog.upsertProduct(
+    await catalog.upsertProduct(
       product({ id: 'p2', image: 'other', imageHover: 'local:asset-2', images: ['local:asset-3'] }),
     );
-    expect(refs.imageReferences('asset-2').length).toBe(1);
-    expect(refs.imageReferences('asset-3').length).toBe(1);
+    expect(refs.imageReferences('local:asset-2').length).toBe(1);
+    expect(refs.imageReferences('local:asset-3').length).toBe(1);
   });
 
   it('detects a variant-specific image, labeled with the variant SKU', async () => {
     const { catalog, refs } = await stores();
-    catalog.upsertProduct(
+    await catalog.upsertProduct(
       product({
         id: 'p3',
         image: 'other',
@@ -137,14 +149,14 @@ describe('imageReferences', () => {
         ],
       }),
     );
-    const uses = refs.imageReferences('asset-4');
+    const uses = refs.imageReferences('local:asset-4');
     expect(uses).toHaveLength(1);
     expect(uses[0]).toContain('V-1');
   });
 
   it('detects a category or collection image', async () => {
     const { catalog, refs } = await stores();
-    catalog.upsertCategory({
+    await catalog.upsertCategory({
       slug: 'rugs',
       name: { ar: 'سجاد', en: 'Rugs' },
       description: { ar: '', en: '' },
@@ -152,61 +164,76 @@ describe('imageReferences', () => {
       visible: true,
       order: 1,
     });
-    expect(refs.imageReferences('asset-5')).toEqual([expect.stringContaining('تصنيف')]);
+    expect(refs.imageReferences('local:asset-5')).toEqual([expect.stringContaining('تصنيف')]);
   });
 
   it('detects every homepage section image independently', async () => {
     const { home, refs } = await stores();
     const hero = home.getHomeContent().hero;
-    home.updateHomeSection('hero', {
+    await home.updateHomeSection('hero', {
       slides: [{ ...hero.slides[0], image: 'local:asset-hero' }, ...hero.slides.slice(1)],
     });
-    home.updateHomeSection('brand', { ...home.getHomeContent().brand, image: 'local:asset-brand' });
-    expect(refs.imageReferences('asset-hero')).toEqual([expect.stringContaining('البطل')]);
-    expect(refs.imageReferences('asset-brand')).toEqual([expect.stringContaining('العلامة')]);
+    await home.updateHomeSection('brand', { ...home.getHomeContent().brand, image: 'local:asset-brand' });
+    expect(refs.imageReferences('local:asset-hero')).toEqual([expect.stringContaining('البطل')]);
+    expect(refs.imageReferences('local:asset-brand')).toEqual([expect.stringContaining('العلامة')]);
   });
 
   it('detects a historical order line\'s snapshotted image', async () => {
     const { orders, refs } = await stores();
     await orders.saveOrder(order([orderLine({ image: 'local:asset-order' })]));
-    expect(refs.imageReferences('asset-order')).toEqual([expect.stringContaining('TYB-2025-TEST')]);
+    expect(refs.imageReferences('local:asset-order')).toEqual([expect.stringContaining('TYB-2025-TEST')]);
   });
 
   it('detects images used by the story, category-card and collection-card sections', async () => {
     const { home, refs } = await stores();
     const c = home.getHomeContent();
-    home.updateHomeSection('story', { ...c.story, image: 'local:asset-story' });
-    home.updateHomeSection('shopCategories', {
+    await home.updateHomeSection('story', { ...c.story, image: 'local:asset-story' });
+    await home.updateHomeSection('shopCategories', {
       ...home.getHomeContent().shopCategories,
       cards: [{ slug: 'rugs', title: '', subtitle: '', image: 'local:asset-cat' }],
     });
-    home.updateHomeSection('collections', {
+    await home.updateHomeSection('collections', {
       ...home.getHomeContent().collections,
       cards: [{ slug: 'diwan', title: '', description: '', image: 'local:asset-coll' }],
     });
-    expect(refs.imageReferences('asset-story')).toHaveLength(1);
-    expect(refs.imageReferences('asset-cat')).toHaveLength(1);
-    expect(refs.imageReferences('asset-coll')).toHaveLength(1);
+    expect(refs.imageReferences('local:asset-story')).toHaveLength(1);
+    expect(refs.imageReferences('local:asset-cat')).toHaveLength(1);
+    expect(refs.imageReferences('local:asset-coll')).toHaveLength(1);
   });
 
   it('aggregates multiple distinct references to the same asset', async () => {
     const { catalog, orders, refs } = await stores();
-    catalog.upsertProduct(product({ image: 'local:asset-shared' }));
+    await catalog.upsertProduct(product({ image: 'local:asset-shared' }));
     await orders.saveOrder(order([orderLine({ image: 'local:asset-shared' })]));
-    expect(refs.imageReferences('asset-shared')).toHaveLength(2);
+    expect(refs.imageReferences('local:asset-shared')).toHaveLength(2);
   });
 });
 
 describe('media deletion protection (Step 11C Part B)', () => {
   it('a referenced asset is reported as blocked (non-empty references) so the Admin UI refuses deletion', async () => {
     const { catalog, refs } = await stores();
-    catalog.upsertProduct(product({ image: 'local:asset-1' }));
-    const uses = refs.imageReferences('asset-1');
+    await catalog.upsertProduct(product({ image: 'local:asset-1' }));
+    const uses = refs.imageReferences('local:asset-1');
     expect(uses.length).toBeGreaterThan(0); // AdminMediaPage treats non-empty as `blocked`
   });
 
   it('an unreferenced asset reports zero uses so deletion is allowed', async () => {
     const { refs } = await stores();
-    expect(refs.imageReferences('orphan-asset')).toHaveLength(0);
+    expect(refs.imageReferences('local:orphan-asset')).toHaveLength(0);
+  });
+});
+
+describe('media: refs (Supabase Storage)', () => {
+  it('detects a product image stored as media:<path>', async () => {
+    const { catalog, refs } = await stores();
+    await catalog.upsertProduct(product({ image: 'media:uploads/abc.webp' }));
+    expect(refs.imageReferences('media:uploads/abc.webp')).toEqual([expect.stringContaining('سجادة اختبار')]);
+    expect(refs.imageReferences('media:uploads/other.webp')).toEqual([]);
+  });
+
+  it('detects a media: ref used by a homepage section', async () => {
+    const { home, refs } = await stores();
+    await home.updateHomeSection('brand', { ...home.getHomeContent().brand, image: 'media:uploads/brand.webp' });
+    expect(refs.imageReferences('media:uploads/brand.webp')).toEqual([expect.stringContaining('العلامة')]);
   });
 });

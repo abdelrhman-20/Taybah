@@ -68,12 +68,12 @@ export function StorefrontFooter() {
     <footer className="mt-6 bg-[#f7f2e9] text-espresso">
       <span className="block h-px bg-gold/40" aria-hidden="true" />
       <Container className="pb-3 pt-5 sm:pt-6">
-        <div className="grid items-center gap-5 lg:grid-cols-[auto_1fr] lg:gap-14">
+        <div className="grid items-center gap-5 lg:grid-cols-[auto_minmax(0,34rem)] lg:justify-center lg:gap-24">
           <Link to={`/${locale}`} aria-label="طيبة — الصفحة الرئيسية" className="mx-auto block w-fit">
             <BrandMark className="h-20 w-auto object-contain sm:h-24 lg:h-28" />
           </Link>
 
-          <div className="relative mx-auto grid w-full max-w-xl grid-cols-2 gap-x-6 lg:max-w-2xl">
+          <div className="relative mx-auto grid w-full max-w-xl grid-cols-2 gap-x-6">
             {collections.length > 0 && (
               <span className="absolute inset-y-1 start-1/2 w-px bg-gold/30" aria-hidden="true" />
             )}

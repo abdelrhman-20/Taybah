@@ -19,6 +19,20 @@ export async function freshBackend(role: Role = 'admin'): Promise<Backend> {
   return mod.backend;
 }
 
+// Simulates reloading the page / opening a fresh private window: brand-new
+// module graph, SAME database contents, different signed-in role.
+export async function reloadWith(b: Backend, role: Role = 'anon'): Promise<Backend> {
+  const tables = b.tables;
+  const objects = b.objects;
+  vi.resetModules();
+  const mod = (await import('../lib/supabase/client')) as unknown as { backend: Backend };
+  mod.backend.reset();
+  mod.backend.role = role;
+  mod.backend.tables = tables;
+  mod.backend.objects = objects;
+  return mod.backend;
+}
+
 export const product = (id: string, over: Record<string, unknown> = {}) => ({
   id,
   slug: `slug-${id}`,

@@ -227,6 +227,18 @@ export async function updateOrderStatus(
   status: OrderStatus,
   expectedStatus?: OrderStatus,
 ): Promise<void> {
+  try {
+    await applyOrderStatus(orderId, status, expectedStatus);
+  } catch (e) {
+    throw classifyError(e); // callers always see a PersistenceError with a `code`
+  }
+}
+
+async function applyOrderStatus(
+  orderId: string,
+  status: OrderStatus,
+  expectedStatus?: OrderStatus,
+): Promise<void> {
   if (!supabaseConfigured) throw new PersistenceError('unconfigured');
   let query = supabase.from('orders').update({ status }).eq('id', orderId);
   if (expectedStatus) query = query.eq('status', expectedStatus);
