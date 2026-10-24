@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { ArrowDown, ArrowUp, Pencil, RotateCcw } from 'lucide-react';
 import {
+  getHomeSyncState,
   resetHomeContent,
   setHomeSections,
   useHomeContent,
@@ -16,6 +17,21 @@ export function AdminHomepagePage() {
   const home = useHomeContent();
   const catalog = useCatalog();
   const [confirmReset, setConfirmReset] = useState(false);
+  // 'saving' while an upsert is in flight; 'saved' only after Supabase
+  // confirmed it; 'error' with the real failure otherwise — never a fake
+  // success.
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const sync = getHomeSyncState();
+
+  const save = (op: () => Promise<void>) => {
+    setSaveState('saving');
+    void op()
+      .then(() => {
+        setSaveState('saved');
+        window.setTimeout(() => setSaveState('idle'), 2500);
+      })
+      .catch(() => setSaveState('error'));
+  };
 
   const preview = (key: HomeSectionKey): string => {
     switch (key) {
@@ -51,14 +67,14 @@ export function AdminHomepagePage() {
     if (target < 0 || target >= home.sections.length) return;
     const next = [...home.sections];
     [next[index], next[target]] = [next[target], next[index]];
-    setHomeSections(next);
+    save(() => setHomeSections(next));
   };
 
   const toggle = (index: number) => {
     const next = home.sections.map((s, i) =>
       i === index ? { ...s, visible: !s.visible } : s,
     );
-    setHomeSections(next);
+    save(() => setHomeSections(next));
   };
 
   return (
@@ -68,7 +84,27 @@ export function AdminHomepagePage() {
         description="إدارة أقسام الصفحة الرئيسية — الظهور والترتيب والمحتوى. التعديلات تظهر في المتجر فورًا."
       />
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-4">
+        <p
+          role="status"
+          aria-live="polite"
+          className={`text-xs font-medium ${
+            saveState === 'error'
+              ? 'text-burgundy'
+              : saveState === 'saving'
+                ? 'text-espresso/55'
+                : 'text-espresso/45'
+          }`}
+        >
+          {saveState === 'saving' && 'جارٍ الحفظ على الخادم…'}
+          {saveState === 'saved' && 'تم الحفظ على الخادم'}
+          {saveState === 'error' &&
+            (sync.status === 'unconfigured'
+              ? 'تعذر الحفظ على الخادم — خدمة التخزين غير مهيأة. التغيير يبقى في هذا المتصفح فقط.'
+              : 'تعذر الحفظ على الخادم — التغيير يبقى في هذا المتصفح فقط.')}
+          {saveState === 'idle' && sync.status === 'error' && 'تعذر مزامنة الإعدادات مع الخادم — تُعرض النسخة المحلية.'}
+          {saveState === 'idle' && sync.status === 'unconfigured' && 'التخزين السحابي غير مهيأ — تحفظ التعديلات في هذا المتصفح فقط.'}
+        </p>
         <button
           type="button"
           onClick={() => setConfirmReset(true)}
@@ -158,7 +194,7 @@ export function AdminHomepagePage() {
         body="ستُستبدل كل تعديلات الصفحة الرئيسية بالمحتوى والترتيب الافتراضيين — بما فيها النصوص والأقسام المختارة والترتيب والظهور. لا يمكن التراجع."
         confirmLabel="نعم، استعد الافتراضي"
         onConfirm={() => {
-          resetHomeContent();
+          save(() => resetHomeContent());
           setConfirmReset(false);
         }}
         onCancel={() => setConfirmReset(false)}

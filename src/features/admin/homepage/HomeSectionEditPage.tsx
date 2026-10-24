@@ -348,6 +348,8 @@ export function HomeSectionEditPage() {
     key ? structuredClone(home[key]) : null,
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Which hero slide the editor is showing (empty = first).
   const [heroSel, setHeroSel] = useState('');
 
@@ -465,8 +467,16 @@ export function HomeSectionEditPage() {
       if (bad) setHeroSel(bad.split('.')[0]);
       return;
     }
-    updateHomeSection(key, draft as never);
-    navigate('/admin/homepage');
+    setSaveError(null);
+    setSaving(true);
+    updateHomeSection(key, draft as never)
+      .then(() => navigate('/admin/homepage'))
+      .catch(() => {
+        setSaving(false);
+        setSaveError(
+          'تعذر الحفظ على الخادم — تحقق من الاتصال وصلاحيات الحساب ثم حاول مجددًا.',
+        );
+      });
   };
 
   const fields = () => {
@@ -699,14 +709,20 @@ export function HomeSectionEditPage() {
         <div className="flex items-center gap-3">
           <button
             type="submit"
-            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+            disabled={saving}
+            className="rounded bg-burgundy px-8 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-burgundy"
           >
-            حفظ التعديلات
+            {saving ? 'جارٍ الحفظ…' : 'حفظ التعديلات'}
           </button>
           <Link to="/admin/homepage" className="text-sm font-medium text-espresso/60 transition hover:text-espresso">
             إلغاء
           </Link>
         </div>
+        {saveError && (
+          <p role="alert" className="text-xs font-medium text-burgundy">
+            {saveError}
+          </p>
+        )}
       </form>
     </div>
   );

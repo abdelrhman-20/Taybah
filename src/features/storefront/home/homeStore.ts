@@ -1,11 +1,18 @@
 import { useSyncExternalStore } from 'react';
 import { placeholderImages } from './homeContent';
 import { catalogCategories, catalogProducts } from '../catalog/catalogData';
+import { supabase, supabaseConfigured } from '../../../lib/supabase/client';
 
 // HOMEPAGE CONTENT STORE — one shared source of truth for the storefront
 // homepage and the admin Homepage manager. Seeds from the section copy that
-// previously lived inside each component, persists to localStorage, and syncs
-// across tabs via the storage event. Replaced by a CMS/table layer later.
+// previously lived inside each component.
+//
+// Persistence is two-layered: the `public.home_sections` table is the durable,
+// cross-device source of truth (when Supabase is configured); localStorage is
+// only a same-browser cache so the page paints instantly before the first
+// fetch resolves. Writes apply locally immediately AND upsert to Supabase —
+// the returned promise rejects if the remote write fails, so admin UIs can
+// report real success/failure instead of guessing.
 
 const STORAGE_KEY = 'taybah:homepage';
 
@@ -486,10 +493,59 @@ function readAll(): HomeContent {
   }
 }
 
+// ---- Supabase sync ---------------------------------------------------------
+//
+// Row shape mirrors home_sections: { id, enabled, display_order, data } where
+// `data` is exactly that section's HomeContent[key] object. Section order and
+// visibility live in every row (order = array position), so a full upsert
+// keeps meta and content consistent in one write.
+
+export interface HomeSectionRow {
+  id: string;
+  enabled: boolean;
+  display_order: number;
+  data: unknown;
+}
+
+export function rowsFromHomeContent(c: HomeContent): HomeSectionRow[] {
+  return c.sections.map((s, i) => ({
+    id: s.key,
+    enabled: s.visible,
+    display_order: i,
+    data: c[s.key],
+  }));
+}
+
+// Rebuilds HomeContent from table rows. Sections with no row are appended
+// hidden (RLS hides disabled rows from the public anyway, so absent = off)
+// and keep `base`'s data — this is what stops a public-scope fetch (which
+// never sees disabled rows) from clobbering an admin's saved-but-hidden
+// section content in the same browser.
+export function homeContentFromRows(rows: HomeSectionRow[], base: HomeContent): HomeContent {
+  const raw: Record<string, unknown> = {};
+  const meta: HomeSectionMeta[] = [];
+  const seen = new Set<HomeSectionKey>();
+  for (const r of rows) {
+    if (!r || !HOME_SECTION_KEYS.includes(r.id as HomeSectionKey) || seen.has(r.id as HomeSectionKey))
+      continue;
+    const key = r.id as HomeSectionKey;
+    seen.add(key);
+    meta.push({ key, visible: r.enabled !== false });
+    raw[key] = r.data;
+  }
+  for (const key of HOME_SECTION_KEYS) {
+    if (seen.has(key)) continue;
+    meta.push({ key, visible: false });
+    raw[key] = base[key];
+  }
+  raw.sections = meta;
+  return migrate(raw as Partial<HomeContent>);
+}
+
 let content: HomeContent = readAll();
 const listeners = new Set<() => void>();
 
-function persist(next: HomeContent) {
+function apply(next: HomeContent) {
   content = next;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(content));
@@ -497,6 +553,85 @@ function persist(next: HomeContent) {
     // storage unavailable — state lives in memory for this session
   }
   listeners.forEach((l) => l());
+}
+
+export type HomeSyncState =
+  | { status: 'unconfigured' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready' };
+
+let syncState: HomeSyncState = supabaseConfigured ? { status: 'loading' } : { status: 'unconfigured' };
+let refreshPromise: Promise<void> | null = null;
+
+export function getHomeSyncState(): HomeSyncState {
+  return syncState;
+}
+
+// Pulls the durable rows and rebuilds local content. An empty table means
+// nothing was ever saved remotely — keep the local/default content rather
+// than wiping it.
+async function refreshFromRemote(): Promise<void> {
+  if (!supabaseConfigured) return;
+  try {
+    const { data, error } = await supabase
+      .from('home_sections')
+      .select('id, enabled, display_order, data')
+      .order('display_order', { ascending: true });
+    if (error) {
+      syncState = { status: 'error', message: error.message };
+      return;
+    }
+    if (data && data.length > 0) apply(homeContentFromRows(data as HomeSectionRow[], content));
+    syncState = { status: 'ready' };
+  } catch (e) {
+    syncState = { status: 'error', message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export function refreshHomeContent(): Promise<void> {
+  refreshPromise ??= refreshFromRemote().finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
+if (supabaseConfigured) {
+  void refreshHomeContent();
+  // The first fetch usually runs before an admin logs in, so it only sees
+  // RLS-public rows. Re-fetch on every auth change: after SIGNED_IN the
+  // admin's session returns the hidden rows' data too.
+  supabase.auth.onAuthStateChange(() => {
+    void refreshHomeContent();
+  });
+}
+
+export class HomeSyncError extends Error {}
+
+// Waits for any in-flight fetch first (so the freshest server state is the
+// base), then applies the user's edit on top and upserts it — otherwise a
+// save made mid-fetch could write stale local data over the server's, or the
+// fetch could overwrite the just-saved edit.
+async function persistImpl(next: HomeContent): Promise<void> {
+  if (!supabaseConfigured) {
+    apply(next);
+    throw new HomeSyncError('unconfigured');
+  }
+  await refreshHomeContent().catch(() => {});
+  apply(next);
+  const { error } = await supabase
+    .from('home_sections')
+    .upsert(rowsFromHomeContent(next), { onConflict: 'id' });
+  if (error) throw new HomeSyncError(error.message);
+}
+
+// Callers that await get the real outcome; callers that fire-and-forget
+// shouldn't trip unhandled-rejection handlers, so observe the rejection here
+// too. (Awaiting still surfaces it — a handled promise can be awaited.)
+function persist(next: HomeContent): Promise<void> {
+  const p = persistImpl(next);
+  p.catch(() => {});
+  return p;
 }
 
 if (typeof window !== 'undefined') {
@@ -521,17 +656,17 @@ export function getHomeContent(): HomeContent {
   return content;
 }
 
-export function setHomeSections(sections: HomeSectionMeta[]) {
-  persist({ ...content, sections });
+export function setHomeSections(sections: HomeSectionMeta[]): Promise<void> {
+  return persist({ ...content, sections });
 }
 
 export function updateHomeSection<K extends HomeSectionKey>(
   key: K,
   value: HomeContent[K],
-) {
-  persist({ ...content, [key]: value });
+): Promise<void> {
+  return persist({ ...content, [key]: value });
 }
 
-export function resetHomeContent() {
-  persist(defaultContent());
+export function resetHomeContent(): Promise<void> {
+  return persist(defaultContent());
 }

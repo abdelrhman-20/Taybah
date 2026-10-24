@@ -333,3 +333,66 @@ describe('homeStore — migration and sanitization of stored data', () => {
     expect(home.getHomeContent().sections.find((s) => s.key === 'hero')?.visible).toBe(true);
   });
 });
+
+describe('homeStore — Supabase row mapping', () => {
+  it('rowsFromHomeContent serializes order, visibility and per-section data into every row', async () => {
+    const home = await freshHomeStore();
+    const c = home.getHomeContent();
+    const rows = home.rowsFromHomeContent(c);
+    expect(rows).toHaveLength(c.sections.length);
+    for (const [i, row] of rows.entries()) {
+      expect(row.display_order).toBe(i);
+      expect(row.id).toBe(c.sections[i].key);
+      expect(row.enabled).toBe(c.sections[i].visible);
+      expect(row.data).toEqual(c[c.sections[i].key]);
+    }
+  });
+
+  it('homeContentFromRows round-trips a saved snapshot exactly', async () => {
+    const home = await freshHomeStore();
+    const base = home.getHomeContent();
+    const rebuilt = home.homeContentFromRows(home.rowsFromHomeContent(base), base);
+    expect(rebuilt.sections).toEqual(base.sections);
+    expect(rebuilt.hero).toEqual(base.hero);
+    expect(rebuilt.newsletter).toEqual(base.newsletter);
+    expect(rebuilt.bestSellers.productIds).toEqual(base.bestSellers.productIds);
+  });
+
+  it('honors server order/visibility and appends rowless sections hidden, keeping their local data', async () => {
+    const home = await freshHomeStore();
+    const base = home.getHomeContent();
+    const rows = [
+      { id: 'newsletter', enabled: true, display_order: 0, data: base.newsletter },
+      { id: 'hero', enabled: false, display_order: 1, data: base.hero },
+    ];
+    const rebuilt = home.homeContentFromRows(rows, base);
+    expect(rebuilt.sections.slice(0, 2)).toEqual([
+      { key: 'newsletter', visible: true },
+      { key: 'hero', visible: false },
+    ]);
+    // Every section the server didn't return is present but hidden.
+    expect(rebuilt.sections).toHaveLength(11);
+    expect(rebuilt.sections.slice(2).every((s) => !s.visible)).toBe(true);
+    // Its data comes from the local base, not the defaults — so a
+    // public-scope fetch can't clobber an admin's saved-but-hidden content.
+    const storyBase = base.story;
+    expect(rebuilt.story).toEqual(storyBase);
+  });
+
+  it('skips unknown/duplicate row ids and sanitizes row data', async () => {
+    const home = await freshHomeStore();
+    const base = home.getHomeContent();
+    const rebuilt = home.homeContentFromRows(
+      [
+        { id: 'not-real', enabled: true, display_order: 0, data: {} },
+        { id: 'hero', enabled: true, display_order: 1, data: { nope: true } },
+        { id: 'hero', enabled: false, display_order: 2, data: base.hero },
+      ],
+      base,
+    );
+    expect(rebuilt.sections.map((s) => s.key)).not.toContain('not-real');
+    expect(rebuilt.sections.filter((s) => s.key === 'hero')).toEqual([{ key: 'hero', visible: true }]);
+    // Malformed row data falls back to sanitized defaults, not a crash.
+    expect(rebuilt.hero.slides.length).toBeGreaterThan(0);
+  });
+});

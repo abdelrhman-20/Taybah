@@ -35,6 +35,10 @@ function ordersTable() {
   };
 }
 
+// Tests exercise the local/cache path only — remote sync stays off so no
+// store test ever attempts a (mocked) network round-trip.
+export const supabaseConfigured = false;
+
 export const supabase = {
   from(table: string) {
     if (table === 'orders') return ordersTable();
