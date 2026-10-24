@@ -40,6 +40,10 @@ export interface DocsState {
   // True after at least one successful load — a later failed refresh then
   // keeps showing the last good data instead of blocking the app.
   everLoaded: boolean;
+  // True when the catalog tables themselves do not exist yet (migration 0006
+  // not applied to this Supabase project). That is a normal "not migrated"
+  // state, NOT an outage: the storefront keeps serving the built-in catalog.
+  schemaMissing: boolean;
   docs: StoredDoc[];
   // Bumped on every state change; used as the memo key by derived stores.
   version: number;
@@ -78,6 +82,7 @@ let state: DocsState = {
   error: null,
   initialized: false,
   everLoaded: false,
+  schemaMissing: false,
   docs: [],
   version: 0,
 };
@@ -156,6 +161,16 @@ async function fetchInitialized(): Promise<boolean> {
   return Boolean(data);
 }
 
+// The ONLY error treated as "not migrated yet": the schema cache says one of
+// OUR two tables does not exist (PostgREST PGRST205, or Postgres 42P01).
+// Anything else — network failure, expired/invalid session, RLS denial, a
+// different missing table, an unknown database error — stays a real error
+// and is never silently converted into the built-in catalog.
+export function isCatalogTableMissing(error: unknown): boolean {
+  const err = classifyError(error);
+  return err.code === 'schema_missing' && /catalog_docs|app_settings/.test(err.detail);
+}
+
 async function refreshOnce(): Promise<void> {
   const seq = writeSeq;
   try {
@@ -165,8 +180,21 @@ async function refreshOnce(): Promise<void> {
       // predate it. Discard and read again rather than regress newer state.
       return refreshOnce();
     }
-    publish({ status: 'ready', error: null, initialized, everLoaded: true }, docs);
+    publish(
+      { status: 'ready', error: null, initialized, everLoaded: true, schemaMissing: false },
+      docs,
+    );
   } catch (e) {
+    if (isCatalogTableMissing(e)) {
+      // Migration 0006 has not been applied: serve the built-in catalog
+      // (initialized=false) exactly like a project that is not yet migrated.
+      console.warn('catalog tables not found — serving the built-in catalog until migration 0006 is applied');
+      publish(
+        { status: 'ready', error: null, initialized: false, everLoaded: true, schemaMissing: true },
+        [],
+      );
+      return;
+    }
     const err = classifyError(e);
     console.error('catalog sync failed:', err.code, err.detail);
     publish({ status: 'error', error: err.code });

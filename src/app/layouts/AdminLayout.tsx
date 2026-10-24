@@ -52,8 +52,9 @@ function CatalogMigrationBanner() {
     >
       <DatabaseZap className="size-4 shrink-0 text-burgundy" aria-hidden />
       <span className="flex-1 leading-6">
-        الكتالوج (المنتجات والتصنيفات والسمات والقوائم) لم يُرحَّل إلى قاعدة البيانات بعد، لذلك
-        تعديلاته معطّلة. المتجر يعرض الكتالوج المدمج حاليًا.
+        {docs.schemaMissing
+          ? 'جداول الكتالوج غير موجودة في قاعدة البيانات بعد (الترحيل 0006 لم يُطبَّق)، لذلك تعديلات الكتالوج معطّلة. المتجر يعرض الكتالوج المدمج حاليًا.'
+          : 'الكتالوج (المنتجات والتصنيفات والسمات والقوائم) لم يُرحَّل إلى قاعدة البيانات بعد، لذلك تعديلاته معطّلة. المتجر يعرض الكتالوج المدمج حاليًا.'}
       </span>
       <Link to="/admin/migration" className="font-medium text-burgundy underline-offset-4 hover:underline">
         فتح النسخ الاحتياطي والترحيل
