@@ -44,6 +44,10 @@ drop function if exists public.notify_order_status_email();
 
 create table if not exists public.order_email_outbox (
   id uuid primary key default gen_random_uuid(),
+  -- Strictly increasing creation order. Timestamps can tie (now() is the
+  -- transaction start time), so ordering and "is there a newer email" checks
+  -- use this instead of created_at.
+  seq bigint generated always as identity,
   order_id uuid not null references public.orders (id) on delete cascade,
   -- UNIQUE = at most one email per status-change event, however many times
   -- the trigger / retries / duplicate requests fire.
@@ -213,14 +217,14 @@ begin
      and o.attempts > 0
      and exists (
        select 1 from public.order_email_outbox n
-       where n.order_id = o.order_id and n.state = 'sent' and n.created_at > o.created_at
+       where n.order_id = o.order_id and n.state = 'sent' and n.seq > o.seq
      );
 
   return query
   with picked as (
     select ob.id from public.order_email_outbox ob
     where ob.state = 'pending' and ob.next_attempt_at <= now()
-    order by ob.created_at
+    order by ob.seq
     limit greatest(1, least(p_limit, 50))
     for update skip locked
   ),

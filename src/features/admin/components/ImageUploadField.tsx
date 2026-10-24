@@ -79,7 +79,7 @@ export function ImageUploadField({
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    handleFile(e.dataTransfer.files?.[0]);
+    void handleFile(e.dataTransfer.files?.[0]);
   };
 
   const hiddenInput = (

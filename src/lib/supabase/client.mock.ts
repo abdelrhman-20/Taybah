@@ -580,6 +580,12 @@ export const supabase = {
       backend.authListeners.add(cb);
       return { data: { subscription: { unsubscribe: () => backend.authListeners.delete(cb) } } };
     },
+    async signInWithPassword() {
+      const fault = backend.begin('auth:signIn');
+      if (fault) return { data: null, error: fault.error };
+      backend.signIn('admin');
+      return { data: { session: backend.session() }, error: null };
+    },
     async signOut() {
       backend.signIn('anon');
       return { error: null };

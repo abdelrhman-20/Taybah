@@ -6,7 +6,7 @@ import {
   Timer,
   XCircle,
 } from 'lucide-react';
-import { useOrders } from '../../storefront/checkout/orderStore';
+import { reloadOrders, useOrders, useOrdersLoadState } from '../../storefront/checkout/orderStore';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { formatPrice } from '../../shared/utils/format';
@@ -21,6 +21,10 @@ function dateOf(iso: string): string {
 
 export function AdminDashboardPage() {
   const orders = useOrders();
+  const loadState = useOrdersLoadState();
+  // A failed load must never read as «0 orders»: counts show an em dash and a
+  // retry banner explains why.
+  const failed = loadState.status === 'error' && orders.length === 0;
 
   const stats = [
     { label: 'إجمالي الطلبات', value: orders.length, icon: ShoppingCart },
@@ -49,6 +53,24 @@ export function AdminDashboardPage() {
         description="إحصاءات مباشرة من الطلبات التجريبية المُرسلة عبر إتمام الطلب كضيف. لا تُعرض مقاييس إيرادات أو عملاء أو محاولات — تُحسب الطلبات المُرسلة بنجاح فقط."
       />
 
+      {loadState.status === 'error' && (
+        <div
+          role="alert"
+          className="mb-5 flex flex-wrap items-center gap-3 rounded border border-burgundy/30 bg-burgundy/5 px-4 py-3 text-sm text-espresso"
+        >
+          <span className="flex-1 leading-6">
+            تعذّر تحميل الطلبات من الخادم ({loadState.code}) — الأرقام أدناه غير مكتملة، وليست دليلًا على عدم وجود طلبات.
+          </span>
+          <button
+            type="button"
+            onClick={() => void reloadOrders()}
+            className="rounded border border-espresso/25 px-4 py-1.5 text-xs font-medium text-espresso transition hover:border-espresso"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      )}
+
       <ul className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {stats.map(({ label, value, icon: Icon }) => (
           <li key={label} className="rounded border border-taupe/70 bg-white p-5">
@@ -58,7 +80,7 @@ export function AdminDashboardPage() {
               </span>
               <Icon className="size-4.5 text-burgundy" aria-hidden />
             </div>
-            <p className="mt-3 font-display text-3xl text-espresso">{value}</p>
+            <p className="mt-3 font-display text-3xl text-espresso">{failed ? '—' : value}</p>
           </li>
         ))}
       </ul>
@@ -75,7 +97,11 @@ export function AdminDashboardPage() {
             كل الطلبات
           </Link>
         </div>
-        {recent.length === 0 ? (
+        {recent.length === 0 && failed ? (
+          <p className="mt-5 rounded border border-dashed border-taupe bg-white py-10 text-center text-sm text-espresso/60">
+            تعذّر تحميل أحدث الطلبات — راجع الرسالة أعلاه.
+          </p>
+        ) : recent.length === 0 ? (
           <div className="mt-5 flex flex-col items-center gap-3 rounded border border-dashed border-taupe bg-white py-14 text-center">
             <LayoutDashboard className="size-7 text-espresso/40" aria-hidden />
             <p className="text-sm text-espresso/60">

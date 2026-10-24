@@ -44,7 +44,14 @@ export function AdminTopbar({ onMenu }: { onMenu: () => void }) {
   }, [bellOpen]);
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      // Network trouble while revoking the session server-side: the local
+      // session is still cleared by supabase-js, so leave the admin anyway
+      // instead of stranding the user on a page that looks signed in.
+      console.error('sign-out request failed:', e instanceof Error ? e.message : e);
+    }
     navigate('/admin/login', { replace: true });
   };
   return (

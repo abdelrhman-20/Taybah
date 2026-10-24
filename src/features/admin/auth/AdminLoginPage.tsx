@@ -24,9 +24,19 @@ export function AdminLoginPage() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (submitting) return;
     setSubmitting(true);
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    setSubmitting(false);
+    let signInError: { name?: string; status?: number; message: string } | null;
+    try {
+      ({ error: signInError } = await supabase.auth.signInWithPassword({ email, password }));
+    } catch (thrown) {
+      // A request that never completed (offline, DNS, blocked): report it as
+      // a connectivity problem and re-enable the form — never leave the
+      // button stuck on «جارٍ الدخول».
+      signInError = { name: 'FetchError', status: 0, message: thrown instanceof Error ? thrown.message : 'network' };
+    } finally {
+      setSubmitting(false);
+    }
     if (signInError) {
       // Safe diagnostics — error name/status only, never credentials or
       // tokens. A wrong-credentials answer should only appear when the

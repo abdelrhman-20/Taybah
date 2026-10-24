@@ -32,10 +32,19 @@ export function useAdminSession(): {
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    supabase.auth.getSession().then(
+      ({ data }) => {
+        setSession(data.session);
+        setLoading(false);
+      },
+      (e: unknown) => {
+        // Could not even read the stored session: treat as signed out
+        // rather than spinning forever.
+        console.error('session read failed:', e instanceof Error ? e.message : e);
+        setSession(null);
+        setLoading(false);
+      },
+    );
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
       setLoading(false);
