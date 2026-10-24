@@ -114,7 +114,7 @@ function Toggle({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between gap-3 py-1.5 text-sm text-espresso/80 transition hover:text-espresso focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-burgundy"
+      className="flex w-full cursor-pointer items-center justify-between gap-3 py-1.5 text-sm text-espresso/80 transition hover:text-espresso focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-burgundy"
     >
       <span>{label}</span>
       <span
