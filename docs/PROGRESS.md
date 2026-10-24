@@ -24,10 +24,20 @@ run any production SQL — see `docs/PRODUCTION_RUNBOOK.md` for the gated steps.
 - Runbook: C3 rollback now warns that rolling back `0005` stops order emails
   until `0002`'s trigger is reapplied; full-removal list covers
   `catalog_skus` + helpers.
+- Migration page: when `0006` is not applied (`docs.schemaMissing`) it shows the
+  exact SQL-Editor steps, and dry run / import / activation are disabled (backup
+  stays available). Test: `AdminMigrationPage.test.tsx` ("schema missing").
+- Review of `0006` (read, not executed): depends only on 0001 `touch_updated_at`
+  and 0003 `is_admin()`, NOT on 0005. Applying it creates tables, functions and
+  policies only; no catalog data is imported and the `catalog_initialized` flag
+  stays unset, so the storefront keeps serving the built-in catalog. The only DML
+  at apply time is the `catalog_skus` backfill from the (empty) `catalog_docs`.
+  Rollback = comment block at the end of the file; dropping `catalog_docs`
+  destroys saved catalog data (export first).
 
 ## Verified locally (never on real Supabase)
 
-- `npm test`: 776/776 (46 files), incl. PGlite suite `supabase/tests/`.
+- `npm test`: 777/777 (46 files; re-run 2026-10-24), incl. PGlite suite `supabase/tests/`.
 - `npm run typecheck`: clean. `npm run lint`: clean (1 pre-existing warning
   in `PageTransition.tsx`). `npm run build`: passes.
 - Known flake: `CheckoutPage.test.tsx` typing-heavy tests can time out under
