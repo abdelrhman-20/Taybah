@@ -1,4 +1,12 @@
 import { describe, expect, it } from 'vitest';
+
+async function vi_waitFor(check: () => boolean, ms = 1000) {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error('condition not met in time');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 import { freshBackend, product, seedCatalog } from '../../../test/harness';
 
 // Document-layer behavior against the in-memory FAKE backend (client.mock.ts).
@@ -237,6 +245,24 @@ describe('catalogDocs — writing', () => {
     await refresh;
     expect((docs.getDoc('product', 'p1')?.data as { price: number }).price).toBe(777);
     expect(docs.getDoc('product', 'p1')?.revision).toBe(2);
+  });
+
+  it('LOST RESPONSE: a write the server applied but whose answer never arrived is reported as a network error, then local state resyncs to what is really saved', async () => {
+    const b = await freshBackend('admin');
+    seedCatalog(b, [product('p1')]);
+    const docs = await load();
+    const opened = docs.docRevision('product', 'p1');
+    b.loseResponseNext('rpc:catalog_write');
+    await expect(docs.writeDocs([putOp('p1', { price: 55 })])).rejects.toMatchObject({ code: 'network' });
+    // the admin is told it failed, but the database did save it
+    expect((b.tables.catalog_docs.find((d) => d.id === 'p1')!.data as { price: number }).price).toBe(55);
+    await vi_waitFor(() => docs.getDoc('product', 'p1')?.revision === 2); // background resync
+    expect((docs.getDoc('product', 'p1')?.data as { price: number }).price).toBe(55);
+    // pressing save again with the form's old revision is refused (no silent double-apply)
+    await expect(
+      docs.writeDocs([putOp('p1', { price: 99 }, { expectedRevision: opened })]),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(b.tables.catalog_docs.find((d) => d.id === 'p1')!.revision).toBe(2);
   });
 
   it('re-reads on sign-in so an admin gets drafts', async () => {

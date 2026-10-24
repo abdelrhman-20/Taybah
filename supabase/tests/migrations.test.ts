@@ -26,7 +26,7 @@ async function outbox(orderId: string) {
   return (
     await db.query<{ kind: string; status: string; state: string; attempts: number; last_error: string | null }>(
       `select kind, status, state, attempts, last_error from public.order_email_outbox
-        where order_id = $1 order by created_at, id`,
+        where order_id = $1 order by seq`,
       [orderId],
     )
   ).rows;
@@ -198,7 +198,7 @@ describe('0005 — order email outbox (real Postgres)', () => {
     await as(db, 'postgres');
     await insertOrder(O1, 'T1', 'a@b.co');
     await insertOrder(O2, 'T2', 'b@b.co');
-    const [failed, sent] = (await db.query<{ id: string }>('select id from public.order_email_outbox order by created_at, id')).rows.map((x) => x.id);
+    const [failed, sent] = (await db.query<{ id: string }>('select id from public.order_email_outbox order by seq')).rows.map((x) => x.id);
     await db.query(`update public.order_email_outbox set state = 'failed', attempts = 5, last_error = 'provider_http_403' where id = $1`, [failed]);
     await db.query(`update public.order_email_outbox set state = 'sent', provider_message_id = 'm' where id = $1`, [sent]);
     await as(db, 'authenticated', ADMIN);

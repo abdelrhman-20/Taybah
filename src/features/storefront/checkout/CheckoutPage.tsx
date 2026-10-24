@@ -1,5 +1,5 @@
 import { AssetImage } from '../../shared/components/AssetImage';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { ShoppingBag } from 'lucide-react';
 import { Container } from '../../shared/components/Container';
@@ -145,6 +145,15 @@ export function CheckoutPage() {
   const [fields, setFields] = useState<FormFields>(initial);
   const [errors, setErrors] = useState<Partial<Record<keyof FormFields, string>>>({});
   const [submitting, setSubmitting] = useState(false);
+  // Guards against a second submit in the same tick (double click / repeated
+  // Enter) — React state alone can lag behind the event.
+  const inFlight = useRef(false);
+  // The id/ref of the order being placed. Kept across failed attempts so a
+  // retry of the SAME order is idempotent (the database rejects the duplicate
+  // id and saveOrder reports it as already created) instead of creating a
+  // second order and a second confirmation email. Replaced when the order's
+  // content changes.
+  const identity = useRef<{ fingerprint: string; id: string; ref: string } | null>(null);
   const [submitError, setSubmitError] = useState(false);
 
 
@@ -184,12 +193,19 @@ export function CheckoutPage() {
     // immediately before creating the order. A hidden or out-of-stock product
     // never reaches an order even if the customer bypassed the disabled CTA.
     if (lines.some((x) => x.block !== null)) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setSubmitError(false);
     setSubmitting(true);
     try {
+      const orderLines = buildOrderLines(lines);
+      const fingerprint = JSON.stringify([fields, orderLines, subtotal]);
+      if (identity.current?.fingerprint !== fingerprint) {
+        identity.current = { fingerprint, id: generateId(), ref: makeOrderRef() };
+      }
       const order: GuestOrder = {
-        id: generateId(),
-        ref: makeOrderRef(),
+        id: identity.current.id,
+        ref: identity.current.ref,
         createdAt: new Date().toISOString(),
         status: 'pending',
         contact: { name: fields.name.trim(), phone: fields.phone.trim(), email: fields.email.trim() },
@@ -203,7 +219,7 @@ export function CheckoutPage() {
           instructions: fields.instructions.trim(),
         },
         delivery: { method: fields.method },
-        lines: buildOrderLines(lines),
+        lines: orderLines,
         subtotal,
         total: subtotal,
       };
@@ -213,6 +229,7 @@ export function CheckoutPage() {
     } catch {
       setSubmitError(true);
       setSubmitting(false);
+      inFlight.current = false;
     }
   };
 

@@ -304,8 +304,16 @@ async function doWrite(ops: DocOp[]): Promise<void> {
     results = (data ?? []) as WriteResult[];
   } catch (e) {
     const err = classifyError(e);
-    if (err.code === 'conflict' || err.code === 'not_found' || err.code === 'exists') {
-      void refreshDocs(); // catch local state up with whoever changed it
+    if (
+      err.code === 'conflict' ||
+      err.code === 'not_found' ||
+      err.code === 'exists' ||
+      err.code === 'network'
+    ) {
+      // Catch local state up. For `network` this matters most: the write may
+      // have been applied even though its response never arrived, and the
+      // admin must then see what is actually saved.
+      void refreshDocs();
     }
     throw err;
   }

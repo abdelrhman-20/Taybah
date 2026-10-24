@@ -147,6 +147,23 @@ describe('checkout order creation (guest)', () => {
     expect(b.tables.orders[0].status).toBe('pending');
   });
 
+  it('saving the SAME order twice is idempotent (an earlier attempt\'s lost response)', async () => {
+    const b = await freshBackend('anon');
+    const store = await load(b);
+    await store.saveOrder(order());
+    await expect(store.saveOrder(order())).resolves.toBeUndefined(); // primary-key conflict => already created
+    expect(b.tables.orders).toHaveLength(1);
+    expect(store.getOrders().filter((o) => o.id === 'g1')).toHaveLength(1);
+  });
+
+  it('a clash on the unique order REFERENCE is a real error, not silently accepted', async () => {
+    const b = await freshBackend('anon');
+    const store = await load(b);
+    await store.saveOrder(order());
+    await expect(store.saveOrder(order({ id: 'g2' }))).rejects.toMatchObject({ code: '23505' });
+    expect(b.tables.orders).toHaveLength(1);
+  });
+
   it('a guest cannot create an order in a privileged status', async () => {
     const b = await freshBackend('anon');
     const store = await load(b);

@@ -208,10 +208,18 @@ export async function saveOrder(order: GuestOrder) {
     subtotal: order.subtotal,
     total: order.total,
   });
-  if (error) throw error;
+  if (error) {
+    // Primary-key conflict on THIS order's id means an earlier attempt of the
+    // same checkout already reached the database and only its response was
+    // lost. The order exists exactly once — report success instead of an
+    // error that would invite the customer to order again. (A clash on the
+    // `ref` unique constraint is a different problem and still throws.)
+    const alreadyCreated = error.code === '23505' && /orders_pkey/.test(error.message ?? '');
+    if (!alreadyCreated) throw error;
+  }
   // Optimistic local update — the customer doesn't have read access to the
   // row they just created (RLS), so there is nothing to re-fetch here.
-  orders = [order, ...orders];
+  orders = [order, ...orders.filter((o) => o.id !== order.id)];
   notify();
 }
 

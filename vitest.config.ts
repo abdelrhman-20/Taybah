@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 // Default environment is node (stores / business logic / SQL). UI tests opt in
@@ -5,6 +6,12 @@ import { defineConfig } from 'vitest/config';
 // against in-memory fakes (src/lib/supabase/client.mock.ts) or an in-process
 // Postgres (supabase/tests) — nothing here talks to a real Supabase project.
 export default defineConfig({
+  resolve: {
+    alias: {
+      // The Deno Edge Function imports this jsr: specifier; tests substitute a stub.
+      'jsr:@supabase/supabase-js@2': fileURLToPath(new URL('./src/test/denoSupabaseStub.ts', import.meta.url)),
+    },
+  },
   test: {
     environment: 'node',
     include: [

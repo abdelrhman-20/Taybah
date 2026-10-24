@@ -64,6 +64,7 @@ class FakeBackend {
   objects = new Map<string, StoredObject>();
   faults: Fault[] = [];
   gates: Array<{ op: string; promise: Promise<void>; release: () => void }> = [];
+  lostResponses: Array<{ op: string; times: number }> = [];
   log: string[] = [];
   authListeners = new Set<(event: string, session: unknown) => void>();
   private objectClock = 0;
@@ -90,6 +91,7 @@ class FakeBackend {
     this.objects = new Map();
     this.faults = [];
     this.gates = [];
+    this.lostResponses = [];
     this.log = [];
     this.authListeners.clear();
     this.objectClock = 0;
@@ -112,6 +114,20 @@ class FakeBackend {
   // op examples: 'rpc:catalog_write', 'from:orders:update', 'storage:upload'
   failNext(op: string, error: unknown, opts: { times?: number; reject?: boolean } = {}) {
     this.faults.push({ op, error, times: opts.times ?? 1, reject: opts.reject ?? false });
+  }
+
+  // The next matching call is EXECUTED (the server applies it) but the client
+  // never gets the answer — it rejects with a network error. Models the
+  // dangerous case: "did my write happen?" is unknowable from the client.
+  loseResponseNext(op: string, times = 1) {
+    this.lostResponses.push({ op, times });
+  }
+
+  takeLostResponse(op: string): boolean {
+    const f = this.lostResponses.find((x) => x.op === op && x.times > 0);
+    if (!f) return false;
+    f.times -= 1;
+    return true;
   }
 
   // The next matching call resolves with this exact payload and no error,
@@ -421,6 +437,7 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
     const fault = backend.begin(op);
     if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
     const result = this.exec();
+    if (backend.takeLostResponse(op)) throw new TypeError('Failed to fetch');
     await backend.settle(op);
     return result;
   }
@@ -460,6 +477,21 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
       const list = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       if (this.table === 'orders') {
         if (list.some((r) => r.status !== 'pending')) return denied();
+        // Unique constraints, with the real constraint names in the message
+        for (const r of list) {
+          if (rows.some((x) => x.id === r.id)) {
+            return {
+              data: null,
+              error: { code: '23505', message: 'duplicate key value violates unique constraint "orders_pkey"' },
+            };
+          }
+          if (rows.some((x) => x.ref === r.ref)) {
+            return {
+              data: null,
+              error: { code: '23505', message: 'duplicate key value violates unique constraint "orders_ref_key"' },
+            };
+          }
+        }
       } else if (!canWrite) return denied();
       for (const r of list) rows.push(jsonb(clone(r)));
       return { data: this.returning ? this.project(list) : null, error: null };
@@ -564,6 +596,7 @@ export const supabase = {
     const fault = backend.begin(`rpc:${name}`);
     if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
     const result = backend.rpc(name, args);
+    if (backend.takeLostResponse(`rpc:${name}`)) throw new TypeError('Failed to fetch');
     await backend.settle(`rpc:${name}`);
     return result;
   },
