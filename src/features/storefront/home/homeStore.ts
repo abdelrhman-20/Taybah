@@ -579,6 +579,8 @@ async function refreshFromRemote(): Promise<void> {
       .select('id, enabled, display_order, data')
       .order('display_order', { ascending: true });
     if (error) {
+      // Safe diagnostics — PostgREST error code/message only, no credentials.
+      console.error('homeStore sync failed:', error.code, error.message);
       syncState = { status: 'error', message: error.message };
       return;
     }
@@ -622,7 +624,12 @@ async function persistImpl(next: HomeContent): Promise<void> {
   const { error } = await supabase
     .from('home_sections')
     .upsert(rowsFromHomeContent(next), { onConflict: 'id' });
-  if (error) throw new HomeSyncError(error.message);
+  if (error) {
+    // Keep the PostgREST code in the message (e.g. "PGRST205: ...") — it
+    // distinguishes missing-table from RLS-denied without exposing secrets.
+    console.error('homeStore save failed:', error.code, error.message);
+    throw new HomeSyncError(`${error.code ?? 'SAVE_ERROR'}: ${error.message}`);
+  }
 }
 
 // Callers that await get the real outcome; callers that fire-and-forget

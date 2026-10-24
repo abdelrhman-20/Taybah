@@ -30,7 +30,10 @@ export function AdminHomepagePage() {
         setSaveState('saved');
         window.setTimeout(() => setSaveState('idle'), 2500);
       })
-      .catch(() => setSaveState('error'));
+      .catch((e: unknown) => {
+        console.error('Homepage settings save failed:', e instanceof Error ? e.message : e);
+        setSaveState('error');
+      });
   };
 
   const preview = (key: HomeSectionKey): string => {

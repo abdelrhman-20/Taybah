@@ -471,7 +471,8 @@ export function HomeSectionEditPage() {
     setSaving(true);
     updateHomeSection(key, draft as never)
       .then(() => navigate('/admin/homepage'))
-      .catch(() => {
+      .catch((e: unknown) => {
+        console.error('Section save failed:', e instanceof Error ? e.message : e);
         setSaving(false);
         setSaveError(
           'تعذر الحفظ على الخادم — تحقق من الاتصال وصلاحيات الحساب ثم حاول مجددًا.',
