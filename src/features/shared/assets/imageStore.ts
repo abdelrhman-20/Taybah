@@ -195,13 +195,22 @@ export function useImageAssets(): ImageAssetMeta[] | null {
   return list;
 }
 
+// Root-absolute refs (e.g. `/images/home/x.jpg` in public/) must gain the
+// deployment base — on GitHub Pages the site lives under /<repo>/, so a bare
+// `/images/...` would resolve against the domain root and 404.
+const ASSET_BASE = import.meta.env.BASE_URL;
+
+function withBase(ref: string): string {
+  return ref.startsWith('/') ? `${ASSET_BASE}${ref.slice(1)}` : ref;
+}
+
 // Resolves any image reference to a renderable URL: `local:` refs become
 // object URLs (async, notified on arrival); external URLs return as-is;
 // missing/empty refs resolve to '' so callers can render a safe fallback.
 export function useImageUrl(ref: string | null | undefined): string {
   const id = ref && isLocalImageRef(ref) ? refToId(ref) : null;
   const url = useSyncExternalStore(subscribe, () =>
-    id ? (urlCache.get(id) ?? '') : (ref ?? ''),
+    id ? (urlCache.get(id) ?? '') : ref ? withBase(ref) : '',
   );
   useEffect(() => {
     if (id) ensureLoaded(id);

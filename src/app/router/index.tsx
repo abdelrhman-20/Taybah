@@ -40,7 +40,8 @@ import { adminNav } from '../../features/admin/layout/adminNav';
 import { NotFoundPage } from '../../features/shared/components/NotFoundPage';
 import { AdminLoginPage } from '../../features/admin/auth/AdminLoginPage';
 
-export const router = createBrowserRouter([
+export const router = createBrowserRouter(
+  [
   { path: '/', element: <RootRedirect /> },
   { path: '/admin/login', element: <AdminLoginPage /> },
   {
@@ -106,5 +107,8 @@ export const router = createBrowserRouter([
       { path: '*', element: <Navigate to="/admin" replace /> },
     ],
   },
-  { path: '*', element: <RootRedirect /> },
-]);
+    { path: '*', element: <RootRedirect /> },
+  ],
+  // Deployed under /<repo>/ on GitHub Pages; BASE_URL is '/' in dev.
+  { basename: import.meta.env.BASE_URL },
+);
