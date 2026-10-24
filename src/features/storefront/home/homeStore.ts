@@ -689,7 +689,13 @@ function persist(
   edit: (fresh: HomeContent) => HomeContent,
   guard?: (fresh: HomeContent) => void,
 ): Promise<void> {
-  const run = writeChain.then(() => persistEdit(edit, guard));
+  // Every failure leaves here as a PersistenceError (raw network TypeErrors
+  // and PostgREST errors are classified), so callers can rely on `.code`.
+  const run = writeChain.then(() =>
+    persistEdit(edit, guard).catch((e: unknown) => {
+      throw classifyError(e);
+    }),
+  );
   writeChain = run.catch(() => undefined);
   return run;
 }

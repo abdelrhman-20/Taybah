@@ -44,6 +44,8 @@ const clone = <T>(v: T): T => structuredClone(v);
 interface Fault {
   op: string;
   error: unknown;
+  // when set, the call "succeeds" with exactly this data (and no error)
+  data?: unknown;
   times: number;
   // true: throw/reject the promise itself (network failure) instead of
   // resolving {error}
@@ -112,6 +114,13 @@ class FakeBackend {
     this.faults.push({ op, error, times: opts.times ?? 1, reject: opts.reject ?? false });
   }
 
+  // The next matching call resolves with this exact payload and no error,
+  // WITHOUT executing — e.g. respondNext('from:orders:update', []) models an
+  // RLS-filtered update that silently matched zero rows.
+  respondNext(op: string, data: unknown, times = 1) {
+    this.faults.push({ op, error: null, data, times, reject: false });
+  }
+
   // Holds the next matching call until release() — for race-condition tests.
   hold(op: string) {
     let release!: () => void;
@@ -123,14 +132,14 @@ class FakeBackend {
 
   // Phase 1 (synchronous, BEFORE the operation runs): record the call and
   // apply any injected fault, so a failed request never mutates anything.
-  begin(op: string): { error: unknown } | null {
+  begin(op: string): { error: unknown; data?: unknown; hasData?: boolean } | null {
     this.log.push(op);
     const fi = this.faults.findIndex((f) => f.op === op && f.times > 0);
     if (fi >= 0) {
       const f = this.faults[fi];
       f.times -= 1;
       if (f.reject) throw f.error;
-      return { error: f.error };
+      return { error: f.error, data: f.data, hasData: 'data' in f && f.data !== undefined };
     }
     return null;
   }
@@ -410,7 +419,7 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
   private async run(): Promise<{ data: unknown; error: unknown }> {
     const op = `from:${this.table}:${this.mode}`;
     const fault = backend.begin(op);
-    if (fault) return { data: null, error: fault.error };
+    if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
     const result = this.exec();
     await backend.settle(op);
     return result;
@@ -498,7 +507,7 @@ function storageBucket(bucket: string) {
   return {
     async upload(path: string, blob: Blob, opts?: { upsert?: boolean; contentType?: string }) {
       const fault = backend.begin('storage:upload');
-      if (fault) return { data: null, error: fault.error };
+      if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
       if (backend.role !== 'admin') {
         return { data: null, error: { message: 'new row violates row-level security policy', statusCode: '403' } };
       }
@@ -514,7 +523,7 @@ function storageBucket(bucket: string) {
     },
     async list(dir: string, opts?: { limit?: number; offset?: number; search?: string }) {
       const fault = backend.begin('storage:list');
-      if (fault) return { data: null, error: fault.error };
+      if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
       const prefix = dir ? `${dir}/` : '';
       let items = [...backend.objects.entries()]
         .filter(([p]) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/'))
@@ -531,7 +540,7 @@ function storageBucket(bucket: string) {
     },
     async remove(paths: string[]) {
       const fault = backend.begin('storage:remove');
-      if (fault) return { data: null, error: fault.error };
+      if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
       const removed: Array<{ name: string }> = [];
       // Storage RLS: a non-admin delete silently removes nothing.
       if (backend.role === 'admin') {
@@ -553,7 +562,7 @@ export const supabase = {
   },
   async rpc(name: string, args: Row = {}) {
     const fault = backend.begin(`rpc:${name}`);
-    if (fault) return { data: null, error: fault.error };
+    if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
     const result = backend.rpc(name, args);
     await backend.settle(`rpc:${name}`);
     return result;

@@ -3,6 +3,28 @@ import { CloudOff } from 'lucide-react';
 import { useDataReadiness } from '../data/useDataReadiness';
 import { LoadingState } from './LoadingState';
 
+// Honest, cause-specific wording: only a real connectivity failure says
+// "couldn't reach the server". Other failures show their machine code so a
+// support person (or a developer reading a screenshot) can tell them apart.
+function failureCopy(code: string): { ar: string; en: string } {
+  if (code === 'network') {
+    return {
+      ar: 'لم نتمكن من الوصول إلى الخادم. تحقق من الاتصال بالإنترنت ثم أعد المحاولة.',
+      en: 'We couldn’t reach the server. Check your connection and try again.',
+    };
+  }
+  if (code === 'unauthorized') {
+    return {
+      ar: 'رفض الخادم الطلب (صلاحيات أو جلسة منتهية). أعد تحميل الصفحة، وإن تكرر الأمر تواصل مع مسؤول الموقع.',
+      en: 'The server refused the request (permissions or an expired session). Reload the page.',
+    };
+  }
+  return {
+    ar: `حدث خطأ أثناء تحميل المحتوى (رمز: ${code}). أعد المحاولة، وإن تكرر الأمر تواصل مع مسؤول الموقع.`,
+    en: `Something went wrong while loading content (code: ${code}). Please try again.`,
+  };
+}
+
 // Blocks rendering until the persistent catalog + homepage content loaded.
 // Without this the first paint would show built-in placeholder content and
 // then swap to the real data (or, worse, let an admin edit stale defaults).
@@ -25,11 +47,11 @@ export function DataGate({ children, bilingual = false }: { children: ReactNode;
         </span>
         <h2 className="font-display text-xl text-espresso">تعذّر تحميل المحتوى</h2>
         <p className="max-w-sm text-sm leading-relaxed text-espresso/60">
-          لم نتمكن من الوصول إلى الخادم. تحقق من الاتصال بالإنترنت ثم أعد المحاولة.
+          {failureCopy(r.code).ar}
         </p>
         {bilingual && (
           <p className="max-w-sm text-sm leading-relaxed text-espresso/60" dir="ltr">
-            We couldn’t reach the server. Check your connection and try again.
+            {failureCopy(r.code).en}
           </p>
         )}
         <button

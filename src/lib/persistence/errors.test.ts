@@ -1,0 +1,75 @@
+import { describe, expect, it } from 'vitest';
+import { PersistenceError, classifyError, describePersistenceError, withTimeout } from './errors';
+import { jsonEqual, stableStringify } from './stableJson';
+
+describe('classifyError', () => {
+  it.each([
+    [{ code: 'CF001', message: 'revision_conflict' }, 'conflict'],
+    [{ code: 'CF002', message: 'not_found' }, 'not_found'],
+    [{ code: 'CF003', message: 'already_exists' }, 'exists'],
+    [{ code: 'CF004', message: 'duplicate_slug' }, 'duplicate_slug'],
+    [{ code: '22023', message: 'invalid_ops' }, 'invalid'],
+    [{ code: '42501', message: 'forbidden' }, 'unauthorized'],
+    [{ code: '42501', message: 'new row violates row-level security policy' }, 'unauthorized'],
+    [{ message: 'permission denied for table catalog_docs' }, 'unauthorized'],
+    [{ code: 'PGRST301', message: 'JWT expired' }, 'unauthorized'],
+    [{ code: 'PGRST205', message: "Could not find the table 'public.x'" }, 'schema_missing'],
+    [{ code: '42883', message: 'function does not exist' }, 'schema_missing'],
+    [new TypeError('Failed to fetch'), 'network'],
+    [{ message: 'AbortError: signal aborted' }, 'network'],
+    [{ code: 'XX000', message: 'boom' }, 'unknown'],
+  ])('maps %j to %s', (input, code) => {
+    expect(classifyError(input).code).toBe(code);
+  });
+
+  it('passes an existing PersistenceError through unchanged', () => {
+    const e = new PersistenceError('conflict', 'x');
+    expect(classifyError(e)).toBe(e);
+  });
+
+  it('keeps diagnostics short and free of credentials-shaped input', () => {
+    const e = classifyError({ code: 'XX000', message: 'a'.repeat(1000), details: 'd'.repeat(1000) });
+    expect(e.detail.length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe('describePersistenceError', () => {
+  it('gives every code a non-empty Arabic message', () => {
+    const codes = [
+      'unconfigured', 'not_initialized', 'unauthorized', 'conflict', 'not_found', 'exists',
+      'duplicate_slug', 'invalid', 'schema_missing', 'verify_failed', 'network', 'unknown',
+    ] as const;
+    for (const c of codes) {
+      const msg = describePersistenceError(new PersistenceError(c));
+      expect(msg.length).toBeGreaterThan(10);
+      expect(/[؀-ۿ]/.test(msg)).toBe(true);
+    }
+  });
+
+  it('states plainly when nothing was saved', () => {
+    expect(describePersistenceError(new PersistenceError('network'))).toContain('لم يُحفظ شيء');
+    expect(describePersistenceError(new PersistenceError('conflict'))).toContain('لم يُحفظ شيء');
+  });
+});
+
+describe('withTimeout', () => {
+  it('rejects with a network error when the call never settles', async () => {
+    await expect(withTimeout(new Promise(() => {}), 20)).rejects.toMatchObject({ code: 'network' });
+  });
+  it('passes through a value that settles in time', async () => {
+    await expect(withTimeout(Promise.resolve(5), 1000)).resolves.toBe(5);
+  });
+});
+
+describe('stableJson', () => {
+  it('ignores key order (jsonb normalisation) at any depth', () => {
+    expect(jsonEqual({ a: 1, b: { c: [1, { x: 1, y: 2 }] } }, { b: { c: [1, { y: 2, x: 1 }] }, a: 1 })).toBe(true);
+  });
+  it('still detects real differences, including array order', () => {
+    expect(jsonEqual({ a: [1, 2] }, { a: [2, 1] })).toBe(false);
+    expect(jsonEqual({ a: 1 }, { a: 2 })).toBe(false);
+  });
+  it('treats undefined fields as absent', () => {
+    expect(stableStringify({ a: 1, b: undefined })).toBe(stableStringify({ a: 1 }));
+  });
+});
