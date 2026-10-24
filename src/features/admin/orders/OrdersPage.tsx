@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ChevronLeft, Search } from 'lucide-react';
+import { ChevronLeft, MailWarning, Search } from 'lucide-react';
 import {
   ORDER_STATUS_LABELS_AR,
   ORDER_STATUSES,
@@ -9,9 +9,18 @@ import {
 import { deliveryMethods } from '../../storefront/checkout/checkoutData';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
+import { fetchOrderIdsWithFailedEmails } from './orderEmailStore';
 import { formatPrice } from '../../shared/utils/format';
 
 type SortKey = 'newest' | 'oldest' | 'total-desc' | 'total-asc';
+
+function EmailFailedMark() {
+  return (
+    <span title="تعذّر إرسال إشعار بريدي لهذا الطلب" className="inline-flex text-burgundy">
+      <MailWarning className="size-4" aria-label="تعذّر إرسال إشعار بريدي" />
+    </span>
+  );
+}
 
 const selectCls =
   'border border-taupe bg-white px-3 py-2 text-sm text-espresso focus:border-burgundy focus:outline-1 focus:outline-burgundy';
@@ -26,6 +35,12 @@ function dateOf(iso: string): string {
 
 export function OrdersPage() {
   const orders = useOrders();
+  const [emailFailed, setEmailFailed] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    // Best-effort: if the outbox isn't readable (migration not applied, not
+    // an admin) the list simply shows no markers.
+    fetchOrderIdsWithFailedEmails().then(setEmailFailed, () => {});
+  }, [orders]);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
   const [method, setMethod] = useState('all');
@@ -173,7 +188,12 @@ export function OrdersPage() {
                     <td className="px-4 py-3 text-end font-semibold text-espresso">
                       {formatPrice(o.total, 'ar')}
                     </td>
-                    <td className="px-4 py-3"><OrderStatusBadge status={o.status} /></td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-2">
+                        <OrderStatusBadge status={o.status} />
+                        {emailFailed.has(o.id) && <EmailFailedMark />}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-end">
                       <Link
                         to={`/admin/orders/${o.id}`}
@@ -201,7 +221,10 @@ export function OrdersPage() {
                     <span className="font-mono text-sm font-medium text-espresso" dir="ltr">
                       {o.ref}
                     </span>
-                    <OrderStatusBadge status={o.status} />
+                    <span className="inline-flex items-center gap-2">
+                      {emailFailed.has(o.id) && <EmailFailedMark />}
+                      <OrderStatusBadge status={o.status} />
+                    </span>
                   </div>
                   <p className="mt-2 text-sm text-espresso/80">{o.contact.name}</p>
                   <p className="mt-0.5 text-xs text-espresso/55" dir="ltr">{o.contact.phone}</p>

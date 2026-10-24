@@ -1,3 +1,5 @@
+-- SUPERSEDED by 0005_order_email_outbox.sql, which drops this trigger. Kept only as history;
+-- do not run it on a fresh project (it hardcodes a key and has no retry/auth).
 -- Order-status email notifications, implemented directly with pg_net
 -- instead of the Database Webhooks UI feature — that feature was failing
 -- to create hooks on this project ("schema supabase_functions does not

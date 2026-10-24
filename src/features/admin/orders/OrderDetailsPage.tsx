@@ -13,6 +13,7 @@ import { checkoutCountries, deliveryMethods, egyptGovernorates } from '../../sto
 import { attributeValueLabel } from '../../storefront/catalog/attributeStore';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
+import { OrderEmailLog } from './OrderEmailLog';
 import { formatPrice } from '../../shared/utils/format';
 
 function dateTime(iso: string): string {
@@ -155,6 +156,8 @@ export function OrderDetailsPage() {
           </div>
         )}
       </section>
+
+      <OrderEmailLog orderId={order.id} status={order.status} />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <section aria-labelledby="od-contact" className="rounded border border-taupe/70 bg-white p-5">
