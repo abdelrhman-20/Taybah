@@ -1,7 +1,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { Eye, EyeOff } from 'lucide-react';
-import { supabase } from '../../../lib/supabase/client';
+import { supabase, supabaseConfigured } from '../../../lib/supabase/client';
 import { FormField } from '../../shared/components/FormField';
 import { Button } from '../../shared/components/Button';
 import { useAdminSession } from './useAdminSession';
@@ -28,7 +28,17 @@ export function AdminLoginPage() {
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     setSubmitting(false);
     if (signInError) {
-      setError('البريد الإلكتروني أو كلمة المرور غير صحيحة.');
+      // Safe diagnostics — error name/status only, never credentials or
+      // tokens. A wrong-credentials answer should only appear when the
+      // auth service was actually reachable and rejected the login.
+      console.error('Admin sign-in failed:', signInError.name, signInError.status);
+      if (!supabaseConfigured) {
+        setError('خدمة تسجيل الدخول غير مهيأة حاليًا — يرجى المحاولة لاحقًا.');
+      } else if (signInError.status === 0 || /fetch|network/i.test(signInError.message)) {
+        setError('تعذر الوصول إلى خدمة تسجيل الدخول — تحقق من الاتصال وحاول مجددًا.');
+      } else {
+        setError('البريد الإلكتروني أو كلمة المرور غير صحيحة.');
+      }
     }
   };
 

@@ -18,6 +18,11 @@ if (!url || !anonKey) {
 // level security (see supabase/migrations/) is the real access boundary,
 // not this key. Never put the service-role key or the database password
 // here or anywhere else under src/.
+// True only when real project config was baked into the build — lets auth
+// surfaces distinguish "service not configured" from genuine failures
+// without inspecting (or logging) any secret values.
+export const supabaseConfigured = Boolean(url && anonKey);
+
 // `||` not `??` — unset CI secrets arrive as empty strings, not undefined,
 // and createClient('') throws at module load (blank page on Pages).
 export const supabase = createClient(
