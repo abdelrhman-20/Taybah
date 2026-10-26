@@ -12,6 +12,7 @@ import {
 import { supabaseConfigured } from '../../../lib/supabase/client';
 import { describePersistenceError, PersistenceError } from '../../../lib/persistence/errors';
 import { useSaveAction } from '../hooks/useSaveAction';
+import { fetchWholesalePrice } from './internalPricing';
 import { generateId } from '../../shared/utils/id';
 import {
   attributeByKey,
@@ -101,6 +102,9 @@ interface Fields {
   slug: string;
   price: string;
   compareAt: string;
+  // Admin-only internal price. Never part of the product document — it is
+  // loaded from / saved to product_internal_pricing (see internalPricing.ts).
+  wholesale: string;
   category: string;
   collection: string;
   colors: string[];
@@ -134,6 +138,7 @@ function fromProduct(p: CatalogProduct): Fields {
     slug: p.slug,
     price: String(p.price),
     compareAt: p.compareAtPrice !== null ? String(p.compareAtPrice) : '',
+    wholesale: '', // filled by the admin-only fetch below
     category: p.category,
     collection: p.collection,
     colors: p.colors,
@@ -167,6 +172,7 @@ const empty: Fields = {
   slug: '',
   price: '',
   compareAt: '',
+  wholesale: '',
   category: '',
   collection: '',
   colors: [],
@@ -222,6 +228,36 @@ export function ProductFormPage() {
   const baseRevision = useRef<number | null>(
     existing ? docRevision('product', existing.id) : null,
   );
+
+  // Wholesale price lifecycle. It lives in its own admin-only table, so it is
+  // fetched separately when editing. While loading, or if the read failed, the
+  // field is disabled and the save leaves the stored value untouched — a failed
+  // read must never be mistaken for "no wholesale price" and wipe it.
+  const [wholesaleLoad, setWholesaleLoad] = useState<'loading' | 'ready' | 'error'>(
+    existing && supabaseConfigured ? 'loading' : 'ready',
+  );
+  // The value as stored when the form loaded; the save only touches the
+  // internal-pricing table when the admin actually changed it.
+  const wholesaleBase = useRef<number | null>(null);
+  const editingId = existing?.id;
+  useEffect(() => {
+    if (!editingId || !supabaseConfigured) return;
+    let cancelled = false;
+    fetchWholesalePrice(editingId).then(
+      (price) => {
+        if (cancelled) return;
+        wholesaleBase.current = price;
+        setFields((f) => ({ ...f, wholesale: price === null ? '' : String(price) }));
+        setWholesaleLoad('ready');
+      },
+      () => {
+        if (!cancelled) setWholesaleLoad('error');
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [editingId]);
 
   // Managed option dialogs — one entry point per reserved attribute
   // (الألوان/الخامات/المقاسات) covering selection, renaming, enabling,
@@ -365,6 +401,13 @@ export function ProductFormPage() {
   // Parsed numerics reused by variant inheritance hints.
   const parsedPrice = fields.price.trim() ? Number(fields.price) : null;
   const parsedCompareAt = fields.compareAt.trim() ? Number(fields.compareAt) : null;
+  const parsedWholesale = fields.wholesale.trim() ? Number(fields.wholesale) : null;
+  const wholesaleAboveRetail =
+    parsedWholesale !== null &&
+    Number.isFinite(parsedWholesale) &&
+    parsedPrice !== null &&
+    Number.isFinite(parsedPrice) &&
+    parsedWholesale > parsedPrice;
 
   // Reference scan for the pending value deletion — a warning in the confirm
   // dialog, never a hard block. This product's own assignment is excluded
@@ -669,6 +712,11 @@ export function ProductFormPage() {
       e.price = 'السعر مطلوب ويجب أن يكون أكبر من صفر.';
     if (compareAt !== null && (!Number.isFinite(compareAt) || compareAt <= price))
       e.compareAt = 'السعر قبل الخصم يجب أن يكون أكبر من السعر الحالي.';
+    if (fields.wholesale.trim()) {
+      const wholesale = Number(fields.wholesale);
+      if (!Number.isFinite(wholesale) || wholesale < 0)
+        e.wholesale = 'سعر الجملة يجب أن يكون رقمًا صفرًا أو أكبر.';
+    }
     if (!catalog.categories.some((c) => c.slug === fields.category))
       e.category = 'اختر تصنيفًا.';
     if (!fields.collection) e.collection = 'اختر مجموعة.';
@@ -776,8 +824,20 @@ export function ProductFormPage() {
     };
     // The form only leaves after the server confirmed AND a read-back
     // matched; on failure it stays open with every field intact.
+    // Internal pricing rides along ONLY when the admin changed it (and it
+    // loaded successfully); otherwise the original catalog_write path is used
+    // unchanged. Both go in one transaction server-side.
+    // Two decimals like the column (numeric(12,2)): a stored 650.5 that the admin did
+    // not touch must compare equal to itself, never get rounded and silently rewritten.
+    const wholesaleNext = fields.wholesale.trim()
+      ? Math.round(Number(fields.wholesale) * 100) / 100
+      : null;
+    const wholesaleChanged = wholesaleLoad === 'ready' && wholesaleNext !== wholesaleBase.current;
     const result = await save.run(() =>
-      writeDocs([productDocOp(product, { expectedRevision: baseRevision.current })]),
+      writeDocs(
+        [productDocOp(product, { expectedRevision: baseRevision.current })],
+        wholesaleChanged ? { wholesale: { productId: product.id, price: wholesaleNext } } : undefined,
+      ),
     );
     if (!result.ok) return;
     navigate(`/admin/products/${product.id}`, {
@@ -865,6 +925,37 @@ export function ProductFormPage() {
               <label htmlFor="pf-compare" className={labelCls}>السعر قبل الخصم (اختياري)</label>
               <input id="pf-compare" inputMode="numeric" dir="ltr" value={fields.compareAt} onChange={(e) => set('compareAt', e.target.value)} className={inputCls} aria-invalid={Boolean(errors.compareAt)} />
               {err('compareAt')}
+            </div>
+            <div>
+              <label htmlFor="pf-wholesale" className={labelCls}>سعر الجملة (ج.م)</label>
+              <input
+                id="pf-wholesale"
+                inputMode="numeric"
+                dir="ltr"
+                value={fields.wholesale}
+                onChange={(e) => set('wholesale', e.target.value)}
+                disabled={wholesaleLoad !== 'ready'}
+                className={inputCls}
+                aria-invalid={Boolean(errors.wholesale)}
+                aria-describedby="pf-wholesale-note"
+              />
+              {err('wholesale')}
+              <p id="pf-wholesale-note" className="mt-1.5 text-[11px] text-espresso/50">
+                داخلي للمسؤولين فقط — لا يظهر للعملاء ولا يُستخدم في المتجر أو السلة أو الفواتير.
+              </p>
+              {wholesaleLoad === 'loading' && (
+                <p className="mt-1.5 text-xs text-espresso/60">جارٍ تحميل سعر الجملة…</p>
+              )}
+              {wholesaleLoad === 'error' && (
+                <p role="alert" className="mt-1.5 text-xs text-burgundy">
+                  تعذّر تحميل سعر الجملة — الحقل معطّل ولن يتغير سعر الجملة المحفوظ عند حفظ المنتج.
+                </p>
+              )}
+              {wholesaleAboveRetail && (
+                <p role="status" className="mt-1.5 text-xs font-medium text-burgundy">
+                  تنبيه (للمسؤول فقط): سعر الجملة أعلى من سعر البيع الحالي — تأكد من القيمة. يمكنك الحفظ رغم ذلك.
+                </p>
+              )}
             </div>
             <div>
               <label htmlFor="pf-cat" className={labelCls}>التصنيف *</label>

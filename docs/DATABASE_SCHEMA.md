@@ -1090,3 +1090,20 @@ unsafe-refresh-timing problem.
   `IN (...)` lists, so adding a new tier later can't accidentally omit
   `owner` from an existing policy the way a copy-pasted list might. See
   [ARCHITECTURE_REVIEW.md](./ARCHITECTURE_REVIEW.md) §C.
+
+## Internal (admin-only) pricing — migration 0007
+
+`public.product_internal_pricing (product_id, wholesale_price)` holds the
+admin-only **wholesale price**. It is deliberately NOT a field of
+`catalog_docs.data`: `catalog_docs` rows are world-readable when visible and RLS
+is per row, so any field inside a product document is served to every visitor.
+
+- Read: admins only (RLS `is_admin()`); `anon` has no privileges on the table.
+- Write: only via `catalog_write_product(p_ops, p_wholesale)` (SECURITY
+  DEFINER, `is_admin()` checked). It wraps the unchanged `catalog_write` and the
+  wholesale upsert in one transaction, so the product (with its revision check)
+  and its price are saved together or not at all. The form uses it only when the
+  wholesale value actually changed; all other writes still call `catalog_write`.
+- Deleting a product cascades to its wholesale price.
+- Rule: never put wholesale/internal pricing in `catalog_docs.data`, orders,
+  or any storefront code path (guarded by `wholesaleExposure.test.ts`).

@@ -110,6 +110,7 @@ class FakeBackend {
       home_sections: [],
       orders: [],
       order_email_outbox: [],
+      product_internal_pricing: [],
     };
     this.objects = new Map();
     this.faults = [];
@@ -242,6 +243,7 @@ class FakeBackend {
     if (name === 'is_admin') return { data: this.role === 'admin', error: null };
     const adminOnly = [
       'catalog_write',
+      'catalog_write_product',
       'catalog_import',
       'catalog_mark_initialized',
       'catalog_unmark_initialized',
@@ -258,6 +260,7 @@ class FakeBackend {
       return { data: null, error: null };
     }
     if (name === 'catalog_write') return this.catalogWrite(args.p_ops as Row[]);
+    if (name === 'catalog_write_product') return this.catalogWriteProduct(args.p_ops as Row[], args.p_wholesale as Row | null);
     if (name === 'catalog_import') return this.catalogImport(args.p_docs as Row[], args.p_dry_run !== false);
     if (name === 'retry_order_email') {
       const r = this.tables.order_email_outbox.find((o) => o.id === args.p_id && o.state === 'failed');
@@ -269,6 +272,36 @@ class FakeBackend {
       return { data: null, error: null };
     }
     return fail('42883', `function ${name} does not exist`);
+  }
+
+  // Mirrors catalog_write_product (migration 0007): catalog_write + the
+  // wholesale upsert are all-or-nothing.
+  private catalogWriteProduct(ops: Row[], wholesale: Row | null): { data: unknown; error: RpcError | null } {
+    const snapshot = clone(this.tables.catalog_docs);
+    const pricing = clone(this.tables.product_internal_pricing);
+    const res = this.catalogWrite(ops);
+    if (res.error || wholesale === null || wholesale === undefined) return res;
+    const bad = (details: string) => {
+      this.tables.catalog_docs = snapshot;
+      this.tables.product_internal_pricing = pricing;
+      return { data: null, error: { code: '22023', message: 'invalid_ops', details } };
+    };
+    const pid = wholesale.product_id as string | undefined;
+    if (!pid || !ops.some((o) => o.op === 'put' && o.kind === 'product' && o.id === pid)) {
+      return bad('wholesale product_id must be a product written in the same batch');
+    }
+    const price = wholesale.price;
+    const rows = this.tables.product_internal_pricing;
+    if (price === null || price === undefined) {
+      this.tables.product_internal_pricing = rows.filter((r) => r.product_id !== pid);
+    } else if (typeof price !== 'number' || price < 0) {
+      return bad('wholesale price must be a number >= 0');
+    } else {
+      const i = rows.findIndex((r) => r.product_id === pid);
+      if (i >= 0) rows[i] = { ...rows[i], wholesale_price: price };
+      else rows.push({ product_id: pid, wholesale_price: price });
+    }
+    return res;
   }
 
   private catalogWrite(ops: Row[]): { data: unknown; error: RpcError | null } {
@@ -352,6 +385,10 @@ class FakeBackend {
       }
     }
     this.tables.catalog_docs = draft; // commit
+    // product_internal_pricing cascades from its product document
+    this.tables.product_internal_pricing = (this.tables.product_internal_pricing ?? []).filter((p) =>
+      draft.some((d) => d.kind === 'product' && d.id === p.product_id),
+    );
     return { data: results, error: null };
   }
 
@@ -521,6 +558,10 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
     const matches = (r: Row) => this.filters.every((f) => f(r));
 
     if (this.mode === 'select') {
+      // anon has no privileges on the internal pricing table at all
+      if (this.table === 'product_internal_pricing' && backend.role === 'anon') {
+        return { data: null, error: { code: '42501', message: 'permission denied for table product_internal_pricing' } };
+      }
       let out = rows.filter((r) => backend.visible(this.table, r) && matches(r));
       for (const o of [...this.orderBy].reverse()) {
         out = [...out].sort((a, b) => {
@@ -537,7 +578,7 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
 
     // ---- writes ----
     const canWrite = backend.role === 'admin';
-    if (this.table === 'catalog_docs' || this.table === 'app_settings') {
+    if (this.table === 'catalog_docs' || this.table === 'app_settings' || this.table === 'product_internal_pricing') {
       return denied('permission denied for table ' + this.table);
     }
 

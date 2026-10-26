@@ -248,6 +248,15 @@ export interface DocDelete {
 
 export type DocOp = DocPut | DocDelete;
 
+// Admin-only internal pricing that must be saved atomically with a product
+// write (migration 0007). It is NEVER part of a document's `data`: the
+// product's own `data` is world-readable, internal pricing is not.
+// price null clears the stored value. `productId` must be a product `put` in
+// the same batch.
+export interface WriteExtras {
+  wholesale?: { productId: string; price: number | null };
+}
+
 interface WriteResult {
   kind: DocKind;
   id: string;
@@ -268,7 +277,7 @@ async function readBack(ops: DocOp[]): Promise<Map<string, StoredDoc>> {
   return found;
 }
 
-async function doWrite(ops: DocOp[]): Promise<void> {
+async function doWrite(ops: DocOp[], extras: WriteExtras = {}): Promise<void> {
   if (!supabaseConfigured) throw new PersistenceError('unconfigured');
   if (!state.initialized) throw new PersistenceError('not_initialized');
   if (ops.length === 0) return;
@@ -299,7 +308,17 @@ async function doWrite(ops: DocOp[]): Promise<void> {
 
   let results: WriteResult[];
   try {
-    const { data, error } = await withTimeout(supabase.rpc('catalog_write', { p_ops: payload }));
+    // catalog_write_product wraps catalog_write + the wholesale upsert in one
+    // transaction; it is used ONLY when internal pricing actually changed, so
+    // every other write keeps its exact, original RPC.
+    const { data, error } = await withTimeout(
+      extras.wholesale
+        ? supabase.rpc('catalog_write_product', {
+            p_ops: payload,
+            p_wholesale: { product_id: extras.wholesale.productId, price: extras.wholesale.price },
+          })
+        : supabase.rpc('catalog_write', { p_ops: payload }),
+    );
     if (error) throw classifyError(error);
     results = (data ?? []) as WriteResult[];
   } catch (e) {
@@ -361,8 +380,8 @@ async function doWrite(ops: DocOp[]): Promise<void> {
 
 // Serialized: concurrent callers run one after another, each computing its
 // expected revisions from the state the previous write left behind.
-export function writeDocs(ops: DocOp[]): Promise<void> {
-  const run = writeChain.then(() => doWrite(ops));
+export function writeDocs(ops: DocOp[], extras?: WriteExtras): Promise<void> {
+  const run = writeChain.then(() => doWrite(ops, extras));
   writeChain = run.catch(() => undefined);
   return run;
 }
