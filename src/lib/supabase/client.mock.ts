@@ -83,6 +83,9 @@ function productSkus(data: unknown): Array<{ sku: string; variantId: string | nu
 
 class FakeBackend {
   role: Role = 'anon';
+  // true = behave like a database where migration 0008 is not applied yet
+  // (orders has no source / note columns).
+  legacyOrdersSchema = false;
   tables: Record<string, Row[]> = {};
   objects = new Map<string, StoredObject>();
   faults: Fault[] = [];
@@ -104,6 +107,7 @@ class FakeBackend {
 
   reset() {
     this.role = 'anon';
+    this.legacyOrdersSchema = false;
     this.tables = {
       catalog_docs: [],
       app_settings: [],
@@ -232,6 +236,39 @@ class FakeBackend {
       default:
         return admin;
     }
+  }
+
+  // Mirrors validate_in_store_order() + the admin insert policy (migration
+  // 0008): admin only, status 'sold', delivery 'in_store', every line an
+  // existing product/variant at its CURRENT retail price, totals = sum of lines.
+  inStoreInsertError(r: Row): { code: string; message: string; details?: string } | null {
+    const invalid = (details: string) => ({ code: '22023', message: 'invalid_in_store_order', details });
+    if (this.role !== 'admin' || r.status !== 'sold') {
+      return { code: '42501', message: 'new row violates row-level security policy' };
+    }
+    if ((r.delivery as { method?: string } | undefined)?.method !== 'in_store') return invalid('delivery must be in_store');
+    const lines = r.lines as Row[];
+    if (!Array.isArray(lines) || lines.length < 1 || lines.length > 100) return invalid('lines must hold 1-100 items');
+    if (/wholesale/i.test(JSON.stringify(lines))) return invalid('wholesale data not allowed');
+    let sum = 0;
+    for (const l of lines) {
+      const qty = l.qty as number;
+      const price = l.price as number;
+      if (!Number.isInteger(qty) || qty < 1 || qty > 999 || typeof price !== 'number') return invalid('bad quantity');
+      const doc = this.tables.catalog_docs.find((d) => d.kind === 'product' && d.id === l.productId);
+      if (!doc) return invalid('unknown product');
+      const data = doc.data as { price: number; variants?: Array<{ id: string; price: number | null }> };
+      let expected = data.price;
+      if (l.variantId) {
+        const v = (data.variants ?? []).find((x) => x.id === l.variantId);
+        if (!v) return invalid('unknown variant');
+        if (typeof v.price === 'number') expected = v.price;
+      }
+      if (price !== expected) return invalid('price_mismatch');
+      sum += price * qty;
+    }
+    if (r.subtotal !== sum || r.total !== sum) return invalid('total_mismatch');
+    return null;
   }
 
   // ---- RPCs -------------------------------------------------------------------
@@ -558,6 +595,9 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
     const matches = (r: Row) => this.filters.every((f) => f(r));
 
     if (this.mode === 'select') {
+      if (this.table === 'orders' && backend.legacyOrdersSchema && /(^|[\s,])(source|note)([\s,]|$)/.test(this.cols ?? '')) {
+        return { data: null, error: { code: '42703', message: 'column orders.source does not exist' } };
+      }
       // anon has no privileges on the internal pricing table at all
       if (this.table === 'product_internal_pricing' && backend.role === 'anon') {
         return { data: null, error: { code: '42501', message: 'permission denied for table product_internal_pricing' } };
@@ -585,7 +625,17 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
     if (this.mode === 'insert') {
       const list = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
       if (this.table === 'orders') {
-        if (list.some((r) => r.status !== 'pending')) return denied();
+        if (backend.legacyOrdersSchema && list.some((r) => 'source' in r || 'note' in r)) {
+          return { data: null, error: { code: '42703', message: 'column "source" of relation "orders" does not exist' } };
+        }
+        for (const r of list) {
+          if (r.source === 'in_store') {
+            const bad = backend.inStoreInsertError(r);
+            if (bad) return { data: null, error: bad };
+          } else if (r.status !== 'pending' || (r.source !== undefined && r.source !== 'online')) {
+            return denied();
+          }
+        }
         // Unique constraints, with the real constraint names in the message
         for (const r of list) {
           if (rows.some((x) => x.id === r.id)) {
@@ -602,7 +652,10 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
           }
         }
       } else if (!canWrite) return denied();
-      for (const r of list) rows.push(jsonb(clone(r)));
+      for (const r of list) {
+        // column defaults of migration 0008
+        rows.push(jsonb(clone(this.table === 'orders' && !backend.legacyOrdersSchema ? { source: 'online', note: null, ...r } : r)));
+      }
       return { data: this.returning ? this.project(list) : null, error: null };
     }
 

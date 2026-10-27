@@ -111,3 +111,13 @@ Resend account** — that is what the end-to-end test above is for.
 
 Outbox ordering uses a monotonic `seq` column rather than `created_at`, because
 `now()` is the transaction start time and can tie.
+
+## In-store orders send no e-mail
+
+Orders with `source = 'in_store'` (status `sold` / `cancelled`, migration
+`0008`) are recorded in `order_email_outbox` as `skipped` with
+`last_error = 'in_store_order'`, whatever contact data they hold. The worker
+never claims them, and `sold` has no e-mail template (the Edge Function would
+skip it as `unknown_status` anyway). The Edge Function does not need
+redeploying for this.
+

@@ -12,7 +12,7 @@ import { formatPrice } from '../../shared/utils/format';
 import { generateId } from '../../shared/utils/id';
 import { navHref } from '../layout/navData';
 import { checkoutCountries, deliveryMethods, egyptGovernorates } from './checkoutData';
-import { buildOrderLines, makeOrderRef, saveOrder, type GuestOrder } from './orderStore';
+import { buildOrderLines, makeOrderRef, saveOrder, type OnlineOrderInput } from './orderStore';
 
 const copy = {
   ar: {
@@ -203,7 +203,7 @@ export function CheckoutPage() {
       if (identity.current?.fingerprint !== fingerprint) {
         identity.current = { fingerprint, id: generateId(), ref: makeOrderRef() };
       }
-      const order: GuestOrder = {
+      const order: OnlineOrderInput = {
         id: identity.current.id,
         ref: identity.current.ref,
         createdAt: new Date().toISOString(),

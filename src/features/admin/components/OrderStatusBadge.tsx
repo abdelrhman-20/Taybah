@@ -10,6 +10,7 @@ const styles: Record<OrderStatus, string> = {
   shipped: 'border-espresso/40 bg-espresso/15 text-espresso',
   delivered: 'border-burgundy/40 bg-burgundy/10 text-burgundy',
   cancelled: 'border-burgundy bg-burgundy text-white',
+  sold: 'border-gold bg-gold/20 text-espresso',
 };
 
 export function OrderStatusBadge({ status }: { status: OrderStatus }) {

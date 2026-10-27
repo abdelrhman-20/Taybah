@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { ArrowRight, TriangleAlert } from 'lucide-react';
 import {
   ORDER_STATUS_LABELS_AR,
-  ORDER_STATUSES,
+  statusesForSource,
   useOrder,
   useOrdersLoadState,
   reloadOrders,
@@ -17,6 +17,7 @@ import { describePersistenceError } from '../../../lib/persistence/errors';
 import { LoadingState } from '../../shared/components/LoadingState';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
+import { OrderSourceBadge } from '../components/OrderSourceBadge';
 import { OrderEmailLog } from './OrderEmailLog';
 import { formatPrice } from '../../shared/utils/format';
 
@@ -119,6 +120,7 @@ export function OrderDetailsPage() {
     .join('، ');
 
   const confirmCancel = pendingStatus === 'cancelled';
+  const inStore = order.source === 'in_store';
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -134,9 +136,14 @@ export function OrderDetailsPage() {
           <h2 className="font-mono font-display text-2xl tracking-wide text-espresso" dir="ltr">
             {order.ref}
           </h2>
-          <p className="mt-1 text-xs text-espresso/55">أُرسل في {dateTime(order.createdAt)}</p>
+          <p className="mt-1 text-xs text-espresso/55">
+            {inStore ? 'سُجّل في' : 'أُرسل في'} {dateTime(order.createdAt)}
+          </p>
         </div>
-        <OrderStatusBadge status={order.status} />
+        <span className="inline-flex items-center gap-2">
+          <OrderSourceBadge source={order.source} />
+          <OrderStatusBadge status={order.status} />
+        </span>
       </div>
 
       {/* status management */}
@@ -152,7 +159,7 @@ export function OrderDetailsPage() {
             disabled={applying}
             className="border border-taupe bg-white px-3 py-2 text-sm text-espresso focus:border-burgundy focus:outline-1 focus:outline-burgundy"
           >
-            {ORDER_STATUSES.map((s) => (
+            {statusesForSource(order.source).map((s) => (
               <option key={s} value={s}>{ORDER_STATUS_LABELS_AR[s]}</option>
             ))}
           </select>
@@ -199,18 +206,37 @@ export function OrderDetailsPage() {
         )}
       </section>
 
-      <OrderEmailLog orderId={order.id} status={order.status} />
+      {inStore ? (
+        <p className="mt-6 rounded border border-taupe/70 bg-white px-5 py-3 text-xs text-espresso/60">
+          طلب من المتجر — لا تُرسل إشعارات بريدية للعميل ولا يدخل في مسار الشحن.
+        </p>
+      ) : (
+        <OrderEmailLog orderId={order.id} status={order.status} />
+      )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <section aria-labelledby="od-contact" className="rounded border border-taupe/70 bg-white p-5">
           <h3 id="od-contact" className="font-display text-lg text-espresso">العميل</h3>
           <dl className="mt-3 space-y-2.5 text-sm">
-            <div className="flex gap-3"><dt className={dtCls}>الاسم</dt><dd className="text-espresso">{order.contact.name}</dd></div>
-            <div className="flex gap-3"><dt className={dtCls}>الهاتف</dt><dd className="text-espresso" dir="ltr">{order.contact.phone}</dd></div>
-            <div className="flex gap-3"><dt className={dtCls}>البريد الإلكتروني</dt><dd className="text-espresso" dir="ltr">{order.contact.email}</dd></div>
+            <div className="flex gap-3"><dt className={dtCls}>الاسم</dt><dd className="text-espresso">{order.contact.name || (inStore ? 'عميل المتجر' : '')}</dd></div>
+            <div className="flex gap-3"><dt className={dtCls}>الهاتف</dt><dd className="text-espresso" dir="ltr">{order.contact.phone || (inStore ? '—' : '')}</dd></div>
+            {!inStore && (
+              <div className="flex gap-3"><dt className={dtCls}>البريد الإلكتروني</dt><dd className="text-espresso" dir="ltr">{order.contact.email}</dd></div>
+            )}
           </dl>
         </section>
 
+        {inStore ? (
+          <section aria-labelledby="od-source" className="rounded border border-taupe/70 bg-white p-5">
+            <h3 id="od-source" className="font-display text-lg text-espresso">المصدر</h3>
+            <dl className="mt-3 space-y-2.5 text-sm">
+              <div className="flex gap-3"><dt className={dtCls}>المصدر</dt><dd className="text-espresso">بيع مباشر من المتجر</dd></div>
+              {order.note && (
+                <div className="flex gap-3"><dt className={dtCls}>ملاحظة</dt><dd className="whitespace-pre-line text-espresso">{order.note}</dd></div>
+              )}
+            </dl>
+          </section>
+        ) : (
         <section aria-labelledby="od-delivery" className="rounded border border-taupe/70 bg-white p-5">
           <h3 id="od-delivery" className="font-display text-lg text-espresso">التوصيل</h3>
           <dl className="mt-3 space-y-2.5 text-sm">
@@ -221,6 +247,7 @@ export function OrderDetailsPage() {
             <div className="flex gap-3"><dt className={dtCls}>الطريقة</dt><dd className="text-espresso">{methodLabel}</dd></div>
           </dl>
         </section>
+        )}
       </div>
 
       <section aria-labelledby="od-items" className="mt-6 rounded border border-taupe/70 bg-white p-5">
@@ -264,10 +291,12 @@ export function OrderDetailsPage() {
             <dt className="text-espresso/60">المجموع الفرعي</dt>
             <dd className="font-medium text-espresso">{formatPrice(order.subtotal, 'ar')}</dd>
           </div>
-          <div className="flex justify-between">
-            <dt className="text-espresso/60">رسوم التوصيل</dt>
-            <dd className="text-espresso/50">يُحدَّد لاحقًا</dd>
-          </div>
+          {!inStore && (
+            <div className="flex justify-between">
+              <dt className="text-espresso/60">رسوم التوصيل</dt>
+              <dd className="text-espresso/50">يُحدَّد لاحقًا</dd>
+            </div>
+          )}
           <div className="flex justify-between border-t border-taupe/60 pt-3">
             <dt className="font-medium text-espresso">الإجمالي</dt>
             <dd className="font-display text-lg font-medium text-espresso">

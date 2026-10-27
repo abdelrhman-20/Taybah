@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ChevronLeft, MailWarning, Search } from 'lucide-react';
+import { ChevronLeft, MailWarning, Plus, Search } from 'lucide-react';
 import {
+  ORDER_SOURCE_LABELS_AR,
+  ORDER_SOURCES,
   ORDER_STATUS_LABELS_AR,
   ORDER_STATUSES,
   reloadOrders,
   useOrders,
   useOrdersLoadState,
+  type GuestOrder,
 } from '../../storefront/checkout/orderStore';
 import { deliveryMethods } from '../../storefront/checkout/checkoutData';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
+import { OrderSourceBadge } from '../components/OrderSourceBadge';
 import { fetchOrderIdsWithFailedEmails } from './orderEmailStore';
 import { formatPrice } from '../../shared/utils/format';
 
@@ -26,6 +30,16 @@ function EmailFailedMark() {
 
 const selectCls =
   'border border-taupe bg-white px-3 py-2 text-sm text-espresso focus:border-burgundy focus:outline-1 focus:outline-burgundy';
+
+// In-store sales have no delivery method of their own and may have no customer.
+function deliveryLabel(o: GuestOrder): string {
+  if (o.source === 'in_store') return 'استلام من المتجر';
+  return deliveryMethods.find((m) => m.key === o.delivery.method)?.label.ar ?? o.delivery.method;
+}
+
+function customerName(o: GuestOrder): string {
+  return o.contact.name || (o.source === 'in_store' ? 'عميل المتجر' : '');
+}
 
 function dateOf(iso: string): string {
   return new Date(iso).toLocaleDateString('ar-EG', {
@@ -47,6 +61,7 @@ export function OrdersPage() {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
   const [method, setMethod] = useState('all');
+  const [source, setSource] = useState('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sort, setSort] = useState<SortKey>('newest');
@@ -61,6 +76,7 @@ export function OrdersPage() {
         if (!hay.includes(q)) return false;
       }
       if (status !== 'all' && o.status !== status) return false;
+      if (source !== 'all' && o.source !== source) return false;
       if (method !== 'all' && o.delivery.method !== method) return false;
       const ts = new Date(o.createdAt).getTime();
       if (fromTs !== null && ts < fromTs) return false;
@@ -77,13 +93,14 @@ export function OrdersPage() {
       default:
         return [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }
-  }, [orders, query, status, method, from, to, sort]);
+  }, [orders, query, status, source, method, from, to, sort]);
 
-  const hasFilters = query || status !== 'all' || method !== 'all' || from || to;
+  const hasFilters = query || status !== 'all' || source !== 'all' || method !== 'all' || from || to;
 
   const clear = () => {
     setQuery('');
     setStatus('all');
+    setSource('all');
     setMethod('all');
     setFrom('');
     setTo('');
@@ -91,10 +108,18 @@ export function OrdersPage() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <AdminPageHeader
-        title="الطلبات"
-        description="الطلبات المُرسلة من الضيوف فقط — لا تُتتبَّع محاولات إتمام الطلب أو السلات المتروكة."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <AdminPageHeader
+          title="الطلبات"
+          description="الطلبات المُرسلة من المتجر الإلكتروني، والمبيعات المباشرة المسجَّلة يدويًا من المتجر — لا تُتتبَّع محاولات إتمام الطلب أو السلات المتروكة."
+        />
+        <Link
+          to="/admin/orders/new"
+          className="inline-flex items-center gap-2 rounded bg-burgundy px-5 py-2.5 text-sm font-medium text-white transition hover:bg-burgundy/90 focus-visible:outline-2 focus-visible:outline-burgundy"
+        >
+          <Plus className="size-4" aria-hidden /> إضافة طلب
+        </Link>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <label className="relative min-w-56 flex-1">
@@ -115,6 +140,12 @@ export function OrdersPage() {
           <option value="all">كل الحالات</option>
           {ORDER_STATUSES.map((s) => (
             <option key={s} value={s}>{ORDER_STATUS_LABELS_AR[s]}</option>
+          ))}
+        </select>
+        <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="التصفية حسب المصدر" className={selectCls}>
+          <option value="all">كل المصادر</option>
+          {ORDER_SOURCES.map((s) => (
+            <option key={s} value={s}>{ORDER_SOURCE_LABELS_AR[s]}</option>
           ))}
         </select>
         <select value={method} onChange={(e) => setMethod(e.target.value)} aria-label="التصفية حسب طريقة التوصيل" className={selectCls}>
@@ -174,7 +205,7 @@ export function OrdersPage() {
             {orders.length === 0
               ? loadState.status === 'error'
                 ? 'تعذّر تحميل الطلبات — راجع الرسالة أعلاه.'
-                : 'لا توجد طلبات بعد — أرسل طلبًا من صفحة إتمام الطلب في المتجر.'
+                : 'لا توجد طلبات بعد — أضف طلبًا من زر «إضافة طلب» أو أرسل طلبًا من صفحة إتمام الطلب في المتجر.'
               : 'لا توجد طلبات تطابق البحث أو عوامل التصفية الحالية.'}
           </p>
         </div>
@@ -182,7 +213,7 @@ export function OrdersPage() {
         <>
           {/* desktop table */}
           <div className="mt-5 hidden overflow-x-auto rounded border border-taupe/70 bg-white md:block">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead>
                 <tr className="border-b border-taupe/60 text-start text-xs tracking-wide text-espresso/50">
                   <th className="px-4 py-3 text-start font-medium">المرجع</th>
@@ -192,6 +223,7 @@ export function OrdersPage() {
                   <th className="px-4 py-3 text-start font-medium">العناصر</th>
                   <th className="px-4 py-3 text-start font-medium">التوصيل</th>
                   <th className="px-4 py-3 text-end font-medium">الإجمالي</th>
+                  <th className="px-4 py-3 text-start font-medium">المصدر</th>
                   <th className="px-4 py-3 text-start font-medium">الحالة</th>
                   <th className="px-4 py-3" aria-label="إجراءات" />
                 </tr>
@@ -202,19 +234,19 @@ export function OrdersPage() {
                     <td className="px-4 py-3 font-mono font-medium text-espresso" dir="ltr">
                       {o.ref}
                     </td>
-                    <td className="px-4 py-3 text-espresso/80">{o.contact.name}</td>
+                    <td className="px-4 py-3 text-espresso/80">{customerName(o)}</td>
                     <td className="px-4 py-3 text-espresso/70" dir="ltr">{o.contact.phone}</td>
                     <td className="px-4 py-3 text-espresso/60">{dateOf(o.createdAt)}</td>
                     <td className="px-4 py-3 text-espresso/70">
                       {o.lines.reduce((n, l) => n + l.qty, 0)}
                     </td>
                     <td className="px-4 py-3 text-espresso/60">
-                      {deliveryMethods.find((m) => m.key === o.delivery.method)?.label.ar ??
-                        o.delivery.method}
+                      {deliveryLabel(o)}
                     </td>
                     <td className="px-4 py-3 text-end font-semibold text-espresso">
                       {formatPrice(o.total, 'ar')}
                     </td>
+                    <td className="px-4 py-3"><OrderSourceBadge source={o.source} /></td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-2">
                         <OrderStatusBadge status={o.status} />
@@ -253,7 +285,9 @@ export function OrdersPage() {
                       <OrderStatusBadge status={o.status} />
                     </span>
                   </div>
-                  <p className="mt-2 text-sm text-espresso/80">{o.contact.name}</p>
+                  <p className="mt-2 flex items-center gap-2 text-sm text-espresso/80">
+                    {customerName(o)} <OrderSourceBadge source={o.source} />
+                  </p>
                   <p className="mt-0.5 text-xs text-espresso/55" dir="ltr">{o.contact.phone}</p>
                   <div className="mt-3 flex items-center justify-between text-xs text-espresso/55">
                     <span>

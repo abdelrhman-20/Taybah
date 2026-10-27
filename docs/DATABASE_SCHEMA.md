@@ -1107,3 +1107,29 @@ is per row, so any field inside a product document is served to every visitor.
 - Deleting a product cascades to its wholesale price.
 - Rule: never put wholesale/internal pricing in `catalog_docs.data`, orders,
   or any storefront code path (guarded by `wholesaleExposure.test.ts`).
+
+## In-store orders — migration 0008
+
+Staff can record walk-in sales on the **existing** `public.orders` table (no
+separate order system). `supabase/migrations/0008_in_store_orders.sql` adds:
+
+| Change | Detail |
+|---|---|
+| `orders.source` | `text not null default 'online'`, `check in ('online','in_store')`. Persisted — never inferred from customer data or status. Existing rows become `online` through the default. |
+| `orders.note` | nullable `text`, max 1000 characters. |
+| status `sold` («تم البيع») | Added to `orders_status_check`. `orders_source_status_check` ties it together: `online` ⇒ any status except `sold`; `in_store` ⇒ only `sold` or `cancelled`. In-store orders can therefore never enter a shipping status. |
+| Insert policy | `"public can insert pending orders"` narrowed to `status='pending' AND source='online'`. New `"admins can insert in-store orders"`: `is_admin() AND source='in_store' AND status='sold'`. Direct client insert, no RPC. |
+| `validate_in_store_order()` (BEFORE INSERT) | Re-checks admin; delivery must be `in_store`; 1–100 lines; integer qty 1–999; every line a real product (and variant) at its **current retail price** (`catalog_docs.data.price`, variant price falling back to the product price); `subtotal = total = Σ price×qty`; no `wholesale` key anywhere in lines/contact. A forged price/total raises `22023 invalid_in_store_order` (detail `price_mismatch` / `total_mismatch`). |
+| `guard_order_update()` (BEFORE UPDATE) | `source` is immutable; an in-store order's lines, subtotal, total and contact are frozen. Status and note stay editable. |
+| `enqueue_order_email()` | Same as 0005 plus: an `in_store` order is always queued as `skipped` (`last_error = 'in_store_order'`), so no customer e-mail is ever sent for it, even if an address were stored. |
+
+Wholesale pricing (`product_internal_pricing`, 0007) is neither read nor written
+by this migration, and its values never appear in an order.
+
+Deploy order: apply `0008` **before** deploying the app version that records
+in-store sales. The order list falls back to the legacy columns if `source`/`note`
+do not exist yet (every order then shows as online), but «إضافة طلب» needs the
+migration. Online checkout works before and after it (it never sends `source`).
+Requires 0001, 0003, 0005 and 0006 — a pre-flight check at the top of the file aborts, changing nothing, if any is missing; safe to re-run. **Never re-apply 0005 after 0008**: it redefines `enqueue_order_email()` without the in-store suppression (re-run 0008 right after if you must). Rollback is in the file's
+trailing comment (delete in-store orders first).
+

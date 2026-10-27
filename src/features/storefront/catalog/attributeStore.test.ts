@@ -137,6 +137,8 @@ const order = (lines: OrderLine[], ref = 'TYB-2025-TEST'): GuestOrder => ({
   lines,
   subtotal: 1000,
   total: 1000,
+  source: 'online',
+  note: null,
 });
 
 const attrDef = (

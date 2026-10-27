@@ -146,6 +146,8 @@ const order = (lines: GuestOrder['lines']): GuestOrder => ({
   lines,
   subtotal: 1000,
   total: 1000,
+  source: 'online',
+  note: null,
 });
 
 const orderLine = (

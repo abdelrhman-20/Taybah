@@ -53,8 +53,9 @@ describe('guest checkout', () => {
     await userEvent.click(submit());
     expect(await screen.findByText('تم استلام الطلب')).toBeTruthy();
     expect(b.tables.orders).toHaveLength(1);
-    const o = b.tables.orders[0] as { status: string; contact: { email: string }; ref: string; lines: unknown[] };
+    const o = b.tables.orders[0] as { status: string; source: string; contact: { email: string }; ref: string; lines: unknown[] };
     expect(o.status).toBe('pending');
+    expect(o.source).toBe('online'); // checkout never produces an in-store order
     expect(o.contact.email).toBe('mona@example.com');
     expect(o.lines).toHaveLength(1);
     expect(cart.getCartLines()).toHaveLength(0);

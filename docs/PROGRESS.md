@@ -4,6 +4,18 @@ For whoever resumes this work. Branch: `feature/admin-persistence-complete`
 (worktree `D:/Projects/Taybah-fix`). Do NOT push, merge to `main`, deploy, or
 run any production SQL — see `docs/PRODUCTION_RUNBOOK.md` for the gated steps.
 
+## In-store orders (local, NOT committed or applied)
+
+- «إضافة طلب» on the Orders page (`/admin/orders/new`): pick products/variants,
+  quantities, retail-price totals, optional customer + note; unavailable
+  products can be sold with a warning. Saved by direct insert, then read back.
+- Migration `0008_in_store_orders.sql`: `orders.source` / `note`, status `sold`
+  («تم البيع»), admin-only insert policy + server-side price/total validation,
+  no e-mail for in-store orders. Not applied anywhere — see Runbook Phase F.
+- Tests: `supabase/tests/in-store-orders.test.ts` (real Postgres),
+  `inStoreOrderStore.test.ts`, `InStoreOrderPage.test.tsx`,
+  `OrdersPage.inStore.test.tsx`.
+
 ## Done (committed)
 
 - Dimensions/options guard (`/admin/products/<id>/edit`): before the catalog

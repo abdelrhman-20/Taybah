@@ -183,6 +183,15 @@ describe('processOutbox', () => {
     expect(finished[0][1]).toEqual({ outcome: 'skipped', error: 'unknown_status' });
   });
 
+  it("never mails the in-store status 'sold' (it has no customer e-mail template)", async () => {
+    const send = vi.fn();
+    const { deps, finished } = harness([claimed({ status: 'sold', kind: 'confirmation' })], send);
+    await processOutbox(deps);
+    expect(send).not.toHaveBeenCalled();
+    expect(finished[0][1]).toEqual({ outcome: 'skipped', error: 'unknown_status' });
+    expect((ORDER_STATUSES as readonly string[]).includes('sold')).toBe(false);
+  });
+
   it('does nothing when the queue is empty (duplicate/repeated invocations are harmless)', async () => {
     const send = vi.fn();
     const { deps, finished } = harness([], send);

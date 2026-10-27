@@ -21,7 +21,9 @@ export type OrderStatus =
   | 'processing'
   | 'shipped'
   | 'delivered'
-  | 'cancelled';
+  | 'cancelled'
+  // In-store sale already completed at the counter (source = 'in_store' only).
+  | 'sold';
 
 export const ORDER_STATUSES: OrderStatus[] = [
   'pending',
@@ -30,7 +32,28 @@ export const ORDER_STATUSES: OrderStatus[] = [
   'shipped',
   'delivered',
   'cancelled',
+  'sold',
 ];
+
+// Where the order came from. Stored in the database (orders.source) — never
+// inferred from customer data or status.
+export type OrderSource = 'online' | 'in_store';
+
+export const ORDER_SOURCES: OrderSource[] = ['online', 'in_store'];
+
+export const ORDER_SOURCE_LABELS_AR: Record<OrderSource, string> = {
+  online: 'أونلاين',
+  in_store: 'من المتجر',
+};
+
+// The statuses an admin may move an order of this source to. In-store sales
+// have no shipping lifecycle (the database enforces the same rule); online
+// orders never use 'sold'.
+export function statusesForSource(source: OrderSource): OrderStatus[] {
+  return source === 'in_store'
+    ? ['sold', 'cancelled']
+    : ORDER_STATUSES.filter((s) => s !== 'sold');
+}
 
 export const ORDER_STATUS_LABELS_AR: Record<OrderStatus, string> = {
   pending: 'قيد الانتظار',
@@ -39,6 +62,7 @@ export const ORDER_STATUS_LABELS_AR: Record<OrderStatus, string> = {
   shipped: 'تم الشحن',
   delivered: 'تم التسليم',
   cancelled: 'ملغٍ',
+  sold: 'تم البيع',
 };
 
 // One selected axis captured at purchase time — labels stored in BOTH
@@ -94,6 +118,8 @@ export interface GuestOrder {
   lines: OrderLine[];
   subtotal: number;
   total: number;
+  source: OrderSource;
+  note: string | null;
 }
 
 interface OrderRow {
@@ -107,6 +133,9 @@ interface OrderRow {
   lines: OrderLine[];
   subtotal: number;
   total: number;
+  // Absent only when read from a database that has not applied migration 0008.
+  source?: OrderSource;
+  note?: string | null;
 }
 
 function fromRow(row: OrderRow): GuestOrder {
@@ -121,6 +150,8 @@ function fromRow(row: OrderRow): GuestOrder {
     lines: row.lines,
     subtotal: row.subtotal,
     total: row.total,
+    source: row.source ?? 'online',
+    note: row.note ?? null,
   };
 }
 
@@ -163,14 +194,20 @@ async function fetchAll(): Promise<void> {
   }
   setLoadState({ status: 'loading' });
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from('orders')
-        .select('id, ref, created_at, status, contact, address, delivery, lines, subtotal, total')
-        .order('created_at', { ascending: false }),
+    const base = 'id, ref, created_at, status, contact, address, delivery, lines, subtotal, total';
+    let result: { data: unknown; error: { code?: string | null } | null } = await withTimeout(
+      supabase.from('orders').select(`${base}, source, note`).order('created_at', { ascending: false }),
     );
+    // Migration 0008 not applied yet (undefined column): keep the list working
+    // with the legacy columns — every order is then, correctly, an online one.
+    if (result.error?.code === '42703') {
+      result = await withTimeout(
+        supabase.from('orders').select(base).order('created_at', { ascending: false }),
+      );
+    }
+    const { data, error } = result;
     if (error) throw classifyError(error);
-    orders = (data ?? []).map(fromRow);
+    orders = ((data as OrderRow[] | null) ?? []).map(fromRow);
     setLoadState({ status: 'ready' });
   } catch (e) {
     const err = classifyError(e);
@@ -196,7 +233,14 @@ if (typeof window !== 'undefined' && supabaseConfigured) {
   });
 }
 
-export async function saveOrder(order: GuestOrder) {
+// What online checkout builds: the source is always 'online' and there is no
+// note, so neither is part of its input.
+export type OnlineOrderInput = Omit<GuestOrder, 'source' | 'note'>;
+
+// Online checkout. Deliberately sends no `source`/`note`: the column default
+// ('online') applies, so checkout behaves identically before and after
+// migration 0008 and cannot be made to claim another source.
+export async function saveOrder(order: OnlineOrderInput) {
   const { error } = await supabase.from('orders').insert({
     id: order.id,
     ref: order.ref,
@@ -219,8 +263,74 @@ export async function saveOrder(order: GuestOrder) {
   }
   // Optimistic local update — the customer doesn't have read access to the
   // row they just created (RLS), so there is nothing to re-fetch here.
-  orders = [order, ...orders.filter((o) => o.id !== order.id)];
+  orders = [{ ...order, source: 'online', note: null }, ...orders.filter((o) => o.id !== order.id)];
   notify();
+}
+
+export interface InStoreOrderInput {
+  id: string;
+  ref: string;
+  customerName: string;
+  customerPhone: string;
+  note: string;
+  // Built with buildOrderLines() from the CURRENT retail prices.
+  lines: OrderLine[];
+}
+
+// Records a walk-in sale. Direct insert: the database decides whether the
+// caller may (admin-only RLS policy) and re-validates prices and totals
+// against the live catalog (migration 0008). Resolves only with the row the
+// database stored — never optimistically — so a success message always means
+// the order is persisted.
+export async function createInStoreOrder(input: InStoreOrderInput): Promise<GuestOrder> {
+  try {
+    return await insertInStoreOrder(input);
+  } catch (e) {
+    throw classifyError(e);
+  }
+}
+
+async function insertInStoreOrder(input: InStoreOrderInput): Promise<GuestOrder> {
+  if (!supabaseConfigured) throw new PersistenceError('unconfigured');
+  const subtotal = input.lines.reduce((n, l) => n + l.price * l.qty, 0);
+  const note = input.note.trim();
+  const payload = {
+    id: input.id,
+    ref: input.ref,
+    status: 'sold' as const,
+    source: 'in_store' as const,
+    contact: { name: input.customerName.trim(), phone: input.customerPhone.trim(), email: '' },
+    address: { country: '', governorate: '', city: '', street: '', building: '', apartment: '', instructions: '' },
+    delivery: { method: 'in_store' },
+    lines: input.lines,
+    subtotal,
+    total: subtotal,
+    note: note === '' ? null : note,
+  };
+  const { error } = await withTimeout(supabase.from('orders').insert(payload));
+  if (error) {
+    // Same idempotency rule as online checkout: a clash on THIS order's id
+    // means an earlier attempt already reached the database. It is only
+    // accepted below if the stored row really is this sale.
+    const alreadyCreated = error.code === '23505' && /orders_pkey/.test(error.message ?? '');
+    if (!alreadyCreated) throw classifyError(error);
+  }
+  // Read the row back: success is reported only for what the database holds.
+  const { data, error: readError } = await withTimeout(
+    supabase
+      .from('orders')
+      .select('id, ref, created_at, status, contact, address, delivery, lines, subtotal, total, source, note')
+      .eq('id', input.id),
+  );
+  if (readError) throw classifyError(readError);
+  const stored = ((data ?? []) as unknown as OrderRow[])[0];
+  if (!stored || stored.source !== 'in_store' || Number(stored.total) !== subtotal) {
+    throw new PersistenceError('verify_failed', 'stored order does not match');
+  }
+  const saved = fromRow(stored);
+  orders = [saved, ...orders.filter((o) => o.id !== saved.id)];
+  notify();
+  return saved;
 }
 
 // Changes an order's status and returns only once the database confirmed it.

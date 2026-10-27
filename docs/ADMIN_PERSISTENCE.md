@@ -51,6 +51,7 @@ prove or disprove a database fault; it pointed at *where the data lived*.
 | Navigation (main + footer links) | `catalog_docs` (`nav`) | same | same |
 | Product/category/homepage images | Supabase Storage bucket `storefront-media` (`media:<path>` refs) | `uploadImage` (validate → upload → verify) | storage RLS admin-only writes (migration 0003) |
 | Orders, order status | `orders`, `order_status_history` | conditional update + `select()` + verification | RLS admin-only after `0005` |
+| In-store orders (`source='in_store'`, status `sold`) | `orders` | `createInStoreOrder`: direct insert → read-back; success only for the row the database returned | admin-only INSERT policy + `validate_in_store_order` trigger (retail prices/totals re-checked server-side), migration `0008` |
 | Order emails | `order_email_outbox` | DB trigger → Edge Function worker; admin retry RPC | admin read; service role writes |
 | Migration / backup | n/a (tooling) | `catalog_import` RPC (never overwrites) | admin-only |
 

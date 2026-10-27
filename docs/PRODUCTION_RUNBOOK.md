@@ -11,6 +11,7 @@ State when this was written:
 | App on `main` (GitHub Pages) | Deployed. Works **without** migrations: when the catalog tables are missing it serves the built-in catalog. |
 | Migration `0006_catalog_documents.sql` | **Not applied** (production answers `404 PGRST205` for `catalog_docs`/`app_settings`). |
 | Migration `0005_order_email_outbox.sql` | **Not applied** (no `order_email_outbox`). |
+| Migration `0008_in_store_orders.sql` | **Not applied.** Adds `orders.source`/`note`, status `sold`, the admin in-store insert policy. Requires 0001, 0003, 0005, 0006 (so Phases A and C first). **Never re-apply 0005 after it.** See Phase F. |
 | Edge Function `process-order-emails` | **Not deployed**. The old `send-order-status-email` function and trigger from `0002` are still live. |
 | Resend | `RESEND_API_KEY` secret exists (per project notes); production sending **never verified**. |
 
@@ -245,6 +246,9 @@ after Phase D has verified the replacement end to end.
 
 ---
 
+> **If `0008` (Phase F) has been applied, do not re-apply `0005`** — it would
+> overwrite the in-store e-mail suppression. Re-run `0008` straight after if you must.
+
 ## Phase D — End-to-end verification (required before relying on emails)
 
 Use the Resend account owner's address as the order's customer email while on
@@ -296,6 +300,9 @@ GitHub secret `VITE_SUPABASE_ANON_KEY`, then redeploying Pages.
 * `0006` needs only `0001` + `0003`; `0005` needs `0001` + `0003` and at least
   one row in `public.admins` (it aborts otherwise). They are independent: apply
   `0006` first, `0005` only in Phase C.
+* `0008` needs `0001`, `0003`, `0005` **and** `0006` (it aborts otherwise) and must
+  never be followed by a re-run of `0005` — see Phase F. Apply it before deploying
+  the app version that records in-store sales.
 * One session at a time should commit/push to `main`; the Pages deploy is
   triggered by any push.
 
@@ -310,3 +317,61 @@ GitHub secret `VITE_SUPABASE_ANON_KEY`, then redeploying Pages.
 | Emails stuck `pending` | Vault secrets / function missing | B3–B4 |
 | Emails `failed` `provider_http_403` | Sandbox sender to a non-owner address, or unverified domain | B1 |
 | Need to undo catalog cutover | — | A5 (lossless) |
+
+---
+
+## Phase F — In-store orders (migration 0008)
+
+Not executed. **Requires Phase A and Phase C first** — «إضافة طلب» prices and
+validates every line against `catalog_docs`, so it cannot work until the catalog
+has been migrated into the database, and `0008` replaces the `enqueue_order_email()`
+function created by `0005`.
+
+### Complete order (database, then app)
+
+| # | Step | Where |
+|---|---|---|
+| 1 | Verify the admin user is in `public.admins` (`0003` applied) | Phase 0.4 |
+| 2 | Apply `0006_catalog_documents.sql` and run the catalog data migration until the catalog is marked initialized | Phase A |
+| 3 | Order-email infrastructure: Edge Function, secrets, Vault | Phase B |
+| 4 | Apply `0005_order_email_outbox.sql` | Phase C |
+| 5 | End-to-end verification | Phase D |
+| 6 | **Apply `0008_in_store_orders.sql`** | this phase |
+| 7 | **Then** deploy the app (push to `main`) | CI |
+
+`0007` (wholesale pricing) is independent of `0008`; apply it whenever you want
+the wholesale field.
+
+### Apply `0008`
+
+1. Run `supabase/migrations/0008_in_store_orders.sql` in the SQL Editor. Its
+   pre-flight check **aborts before changing anything** if `public.orders`,
+   `public.is_admin()`, `public.order_email_outbox` / `kick_order_email_worker()`
+   (`0005`) or `public.catalog_docs` (`0006`) is missing, and says which.
+2. It is re-runnable and additive: existing orders become `source = 'online'`;
+   no data is rewritten.
+3. Deploy the app **after** the migration. Deploying first keeps the order list
+   and online checkout working (legacy columns fallback) but «إضافة طلب» cannot
+   save until the migration exists. The page also refuses to submit, with an
+   explanation, while the catalog is not migrated.
+
+> **WARNING — never re-apply `0005` after `0008`.** `0008` replaces
+> `enqueue_order_email()` with a version that never e-mails customers for in-store
+> sales. `0005` contains the old version, so re-running it silently removes that
+> suppression and in-store orders that carry an e-mail address could queue customer
+> e-mails again. If `0005` ever must be re-applied, **re-run `0008` immediately
+> afterwards**, and check that in-store orders still land in `order_email_outbox`
+> as `skipped` / `in_store_order`.
+
+### Verify
+
+* «إضافة طلب» on the Orders page → add a product → save → the order shows
+  «من المتجر» / «تم البيع» and survives a refresh.
+* No row with state `pending` appears in `order_email_outbox` for it.
+* A normal storefront order still shows «أونلاين» / «قيد الانتظار» and still
+  queues its confirmation e-mail.
+
+### Rollback
+
+See the comment at the end of the migration (delete in-store orders first, then
+restore the `enqueue_order_email()` definition from `0005`).

@@ -23,6 +23,7 @@ import { OrderConfirmationPage } from '../../features/storefront/checkout/OrderC
 import { AdminDashboardPage } from '../../features/admin/dashboard/AdminDashboardPage';
 import { OrdersPage } from '../../features/admin/orders/OrdersPage';
 import { OrderDetailsPage } from '../../features/admin/orders/OrderDetailsPage';
+import { InStoreOrderPage } from '../../features/admin/orders/InStoreOrderPage';
 import { AdminPlaceholderPage } from '../../features/admin/components/AdminPlaceholderPage';
 import { AdminProductsPage } from '../../features/admin/catalog/AdminProductsPage';
 import { ProductFormPage } from '../../features/admin/catalog/ProductFormPage';
@@ -78,6 +79,7 @@ export const router = createBrowserRouter(
     children: [
       { index: true, element: <AdminDashboardPage /> },
       { path: 'orders', element: <OrdersPage /> },
+      { path: 'orders/new', element: <InStoreOrderPage /> },
       { path: 'orders/:orderId', element: <OrderDetailsPage /> },
       { path: 'products', element: <AdminProductsPage /> },
       { path: 'products/new', element: <ProductFormPage /> },
