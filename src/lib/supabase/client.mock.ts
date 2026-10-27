@@ -86,6 +86,20 @@ class FakeBackend {
   // true = behave like a database where migration 0008 is not applied yet
   // (orders has no source / note columns).
   legacyOrdersSchema = false;
+  // every RPC the client made (name + arguments), for assertions
+  rpcLog: Array<{ name: string; args: Row }> = [];
+  movementSeq = 0;
+  // MOCK of migration 0010 (stock deduction from orders): OFF by default, so every existing
+  // order test keeps today's behaviour. A test switches it on to model a database that has
+  // 0010 applied. The real SQL is verified in supabase/tests/inventory.orders.test.ts.
+  inventoryOrders = false;
+  overrideActive = false;
+  overrideAttempts = new Map<string, { order_id: string; op: string; reason: string; short: string }>();
+  // Fixtures for the reconciliation RPCs of 0009 (blockers / preflight rows are supplied by
+  // the test; the decision and import calls act on them). The SQL itself is proven in
+  // supabase/tests/inventory*.test.ts.
+  reconBlockers: Row[] = [];
+  reconRows: Row[] = [];
   tables: Record<string, Row[]> = {};
   objects = new Map<string, StoredObject>();
   faults: Fault[] = [];
@@ -108,6 +122,13 @@ class FakeBackend {
   reset() {
     this.role = 'anon';
     this.legacyOrdersSchema = false;
+    this.rpcLog = [];
+    this.movementSeq = 0;
+    this.inventoryOrders = false;
+    this.overrideActive = false;
+    this.overrideAttempts = new Map();
+    this.reconBlockers = [];
+    this.reconRows = [];
     this.tables = {
       catalog_docs: [],
       app_settings: [],
@@ -115,6 +136,9 @@ class FakeBackend {
       orders: [],
       order_email_outbox: [],
       product_internal_pricing: [],
+      // inventory (migration 0009) — admin-only, written only by the RPCs below
+      stock_levels: [],
+      stock_movements: [],
     };
     this.objects = new Map();
     this.faults = [];
@@ -278,6 +302,26 @@ class FakeBackend {
       error: { code, message, details: details ?? null },
     });
     if (name === 'is_admin') return { data: this.role === 'admin', error: null };
+    const inventoryRpcs = [
+      'inventory_set_opening',
+      'inventory_adjust',
+      'inventory_receive',
+      'inventory_record_return',
+      'inventory_set_threshold',
+    ];
+    if (inventoryRpcs.includes(name)) {
+      if (this.role !== 'admin') return fail('42501', 'forbidden');
+      return this.inventoryRpc(name, args);
+    }
+    if (['inventory_activation_blockers', 'inventory_preflight_report', 'inventory_decide_order', 'inventory_import_opening'].includes(name)) {
+      if (this.role !== 'admin') return fail('42501', 'forbidden');
+      return this.reconRpc(name, args);
+    }
+    if (name === 'inventory_deliver_order_override' || name === 'inventory_create_in_store_order_override') {
+      if (!this.inventoryOrders) return fail('42883', `function ${name} does not exist`); // 0010 not applied
+      if (this.role !== 'admin') return fail('42501', 'forbidden');
+      return this.overrideRpc(name, args);
+    }
     const adminOnly = [
       'catalog_write',
       'catalog_write_product',
@@ -308,6 +352,406 @@ class FakeBackend {
       }
       return { data: null, error: null };
     }
+    return fail('42883', `function ${name} does not exist`);
+  }
+
+  // ---- MOCK of migration 0010 -------------------------------------------------------
+  private orderPlan(order: Row) {
+    const levels = this.tables.stock_levels;
+    const moves = this.tables.stock_movements;
+    const agg = new Map<string, number>();
+    for (const l of (order.lines as Row[]) ?? []) {
+      const id = String(l.productId);
+      agg.set(id, (agg.get(id) ?? 0) + Number(l.qty));
+    }
+    const ids = [...agg.keys()].sort();
+    const missing = ids.filter((id) => !levels.some((l) => l.product_id === id));
+    const todo = ids.filter((id) => !moves.some((m) => m.idempotency_key === `sale:${order.id}:${id}`));
+    const short = todo.flatMap((id) => {
+      const on = levels.find((l) => l.product_id === id)?.on_hand as number | undefined;
+      const req = agg.get(id)!;
+      return on !== undefined && on < req ? [{ product_id: id, requested: req, available: on, shortfall: req - on }] : [];
+    });
+    return { agg, missing, todo, short };
+  }
+
+  // The deduction of the order triggers (IS001 / IS002), applied atomically or not at all.
+  orderStock(order: Row, op: 'deliver_order' | 'create_in_store_order', overridden: boolean): { code: string; message: string; details: string } | null {
+    const { agg, missing, todo, short } = this.orderPlan(order);
+    if (missing.length > 0) return { code: 'IS001', message: 'stock_not_initialized', details: missing.join(',') };
+    if (short.length > 0 && !overridden) return { code: 'IS002', message: 'insufficient_stock', details: JSON.stringify(short) };
+    for (const id of todo) {
+      const l = this.tables.stock_levels.find((x) => x.product_id === id)!;
+      const before = l.on_hand as number;
+      const q = agg.get(id)!;
+      const sf = short.find((x) => x.product_id === id);
+      l.on_hand = before - q;
+      this.movementSeq += 1;
+      this.tables.stock_movements.push({
+        id: `mv-${this.movementSeq}`,
+        seq: this.movementSeq,
+        product_id: id,
+        product_name: l.product_name ?? null,
+        product_sku: l.product_sku ?? null,
+        kind: 'sale',
+        quantity: q,
+        qty_delta: -q,
+        qty_before: before,
+        qty_after: before - q,
+        reason: `${op === 'deliver_order' ? 'تسليم الطلب ' : 'بيع من المتجر '}${order.ref}`,
+        reference: null,
+        order_id: order.id,
+        idempotency_key: `sale:${order.id}:${id}`,
+        override: overridden && !!sf,
+        shortfall: overridden && sf ? sf.shortfall : 0,
+        override_grant_id: null,
+        actor: ADMIN_ID,
+        actor_email: 'admin@example.test',
+        created_at: new Date(Date.UTC(2026, 0, 1) + this.movementSeq * 60_000).toISOString(),
+      });
+    }
+    return null;
+  }
+
+  private reconRpc(name: string, args: Row): { data: unknown; error: RpcError | null } {
+    const invalid = (d: string) => ({ data: null, error: { code: '22023', message: 'inventory_invalid', details: d } });
+    if (name === 'inventory_activation_blockers') return { data: clone(this.reconBlockers), error: null };
+    if (name === 'inventory_preflight_report') return { data: clone(this.reconRows), error: null };
+    if (name === 'inventory_decide_order') {
+      const rows = this.reconRows.filter((r) => r.order_id === args.p_order_id);
+      if (rows.length === 0) return invalid('unknown order');
+      if (String(args.p_reason ?? '').trim().length < 5) return invalid('a reason of at least 5 characters is required');
+      if (args.p_decision !== 'deduct_on_delivery' && args.p_decision !== 'already_accounted') return invalid('decision must be deduct_on_delivery or already_accounted');
+      if (rows[0].lines_hash !== args.p_lines_hash) return invalid('lines_changed: the order lines are not the ones the decision was based on');
+      if (rows[0].status === 'delivered' && args.p_decision !== 'already_accounted') return invalid('an already delivered order can only be recorded as already_accounted');
+      const same = rows[0].decision === args.p_decision;
+      for (const r of rows) {
+        r.decision = args.p_decision;
+        r.decision_matches_lines = true;
+        r.decision_status_changed = false;
+      }
+      return { data: { status: same ? 'unchanged' : 'recorded', decision_id: 'dec-1', decision: args.p_decision }, error: null };
+    }
+    // inventory_import_opening
+    const input = (args.p_rows as Row[]) ?? [];
+    const dry = args.p_dry_run !== false;
+    const seen = new Set<string>();
+    const out = input.map((e) => {
+      const id = typeof e.product_id === 'string' ? e.product_id : null;
+      let status = 'would_create';
+      if (id === null || !Number.isInteger(e.quantity) || (e.quantity as number) < 0) status = 'invalid';
+      else if (seen.has(id)) status = 'duplicate_in_batch';
+      else if (!this.tables.catalog_docs.some((d) => d.kind === 'product' && d.id === id)) status = 'unknown_product';
+      else if (this.tables.stock_levels.some((l) => l.product_id === id)) status = 'already_initialized';
+      if (id) seen.add(id);
+      return { product_id: id, quantity: e.quantity, status };
+    });
+    const rejected = out.filter((r) => !['would_create', 'already_initialized'].includes(r.status)).length;
+    const toCreate = out.filter((r) => r.status === 'would_create');
+    if (!dry) {
+      if (rejected > 0) return invalid('the batch has rejected rows; nothing was written');
+      for (const r of toCreate) {
+        this.movementSeq += 1;
+        this.tables.stock_levels.push({ product_id: r.product_id, on_hand: r.quantity, low_threshold: null, product_name: null, product_sku: null });
+        this.tables.stock_movements.push({ id: `mv-${this.movementSeq}`, seq: this.movementSeq, product_id: r.product_id, kind: 'opening', quantity: r.quantity, qty_delta: r.quantity, qty_before: 0, qty_after: r.quantity });
+      }
+    }
+    const uninit = this.tables.catalog_docs.filter((d) => d.kind === 'product' && !seen.has(d.id as string) && !this.tables.stock_levels.some((l) => l.product_id === d.id));
+    return {
+      data: {
+        dry_run: dry,
+        created: toCreate.length,
+        skipped: out.filter((r) => r.status === 'already_initialized').length,
+        rejected,
+        rows: out,
+        catalog_products_not_in_batch_and_uninitialized: uninit.length,
+        catalog_products_not_in_batch_sample: uninit.slice(0, 10).map((d) => d.id),
+      },
+      error: null,
+    };
+  }
+
+  private overrideRpc(name: string, args: Row): { data: unknown; error: RpcError | null } {
+    const fail = (code: string, message: string, details?: string) => ({ data: null, error: { code, message, details: details ?? null } });
+    const invalid = (d: string) => fail('22023', 'inventory_invalid', d);
+    const reason = typeof args.p_reason === 'string' ? args.p_reason.trim() : '';
+    if (reason.length < 5) return invalid('a reason of at least 5 characters is required');
+    const key = args.p_attempt_key as string | null;
+    if (!key) return invalid('attempt key is required');
+    const isDeliver = name === 'inventory_deliver_order_override';
+    const op = isDeliver ? 'deliver_order' : 'create_in_store_order';
+    const confirmed = JSON.stringify(
+      [...((args.p_confirmed_shortfall as Row[]) ?? [])]
+        .map((e) => ({ product_id: e.product_id, requested: e.requested, available: e.available, shortfall: e.shortfall }))
+        .sort((a, b) => String(a.product_id).localeCompare(String(b.product_id))),
+    );
+    const payload = args.p_order as Row | undefined;
+    const orderId = (isDeliver ? args.p_order_id : payload?.id) as string;
+    const result = (status: string) => ({
+      data: {
+        status,
+        order_id: orderId,
+        deductions: this.tables.stock_movements
+          .filter((m) => m.order_id === orderId && m.kind === 'sale')
+          .map((m) => ({ product_id: m.product_id, quantity: m.quantity, qty_before: m.qty_before, qty_after: m.qty_after, override: m.override, shortfall: m.shortfall })),
+      },
+      error: null,
+    });
+
+    const seen = this.overrideAttempts.get(key);
+    if (seen) {
+      const diff = [seen.order_id !== orderId && 'order', seen.op !== op && 'operation', seen.reason !== reason && 'reason', seen.short !== confirmed && 'confirmed_shortfall'].filter(Boolean);
+      if (diff.length > 0) {
+        return fail('IS005', 'idempotency_key_reuse', `idempotency key already used for a different request (differs: ${diff.join(', ')})`);
+      }
+      return result('replayed');
+    }
+
+    let order: Row | undefined;
+    if (isDeliver) {
+      order = this.tables.orders.find((o) => o.id === orderId);
+      if (!order) return invalid('unknown order');
+      if (order.source === 'in_store') return invalid('only online orders are delivered');
+      if (order.status === 'delivered') return result('unchanged');
+      if (order.status !== args.p_expected_status) return fail('CF001', 'order_status_changed', `order ${order.ref}`);
+    } else {
+      if (this.tables.orders.some((o) => o.id === orderId)) return invalid('an order with this id already exists');
+      const row: Row = {
+        created_at: new Date().toISOString(),
+        note: null,
+        ...(payload as Row),
+        status: 'sold',
+        source: 'in_store',
+      };
+      const bad = this.inStoreInsertError(row);
+      if (bad) return { data: null, error: { code: bad.code, message: bad.message, details: bad.details ?? null } };
+      order = row;
+    }
+    const plan = this.orderPlan(order);
+    if (plan.missing.length > 0) return fail('IS001', 'stock_not_initialized', plan.missing.join(','));
+    if (plan.short.length === 0) return invalid('no shortage: proceed normally');
+    if (JSON.stringify(plan.short) !== confirmed) return fail('IS007', 'shortfall_changed', JSON.stringify(plan.short));
+
+    this.overrideActive = true;
+    try {
+      const err = this.orderStock(order, op, true);
+      if (err) return fail(err.code, err.message, err.details);
+    } finally {
+      this.overrideActive = false;
+    }
+    if (isDeliver) order.status = 'delivered';
+    else this.tables.orders.push(jsonb(clone(order)));
+    this.overrideAttempts.set(key, { order_id: orderId, op, reason, short: confirmed });
+    return result(isDeliver ? 'delivered' : 'created');
+  }
+
+  // MOCK of the inventory RPCs of migration 0009 — only what the admin UI calls.
+  // Same validation, error codes (22023 / IS001 / IS005), ledger fields and
+  // idempotency rules as the SQL; the real SQL (constraints, locks, RLS) is verified
+  // against Postgres in supabase/tests/inventory*.test.ts. It proves the CLIENT
+  // handles those behaviours, NOT that a database has migration 0009 applied.
+  private inventoryRpc(name: string, args: Row): { data: unknown; error: RpcError | null } {
+    const ok = (data: unknown) => ({ data, error: null });
+    const fail = (code: string, message: string, details?: string) => ({
+      data: null,
+      error: { code, message, details: details ?? null },
+    });
+    const invalid = (details: string) => fail('22023', 'inventory_invalid', details);
+    const levels = this.tables.stock_levels;
+    const moves = this.tables.stock_movements;
+    if (!levels || !moves) return fail('42883', `function ${name} does not exist`);
+
+    const pid = args.p_product_id as string;
+    const reason = typeof args.p_reason === 'string' ? args.p_reason.trim() : '';
+    const int = (v: unknown, lo: number, hi: number) =>
+      typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+    const reasonErr = () =>
+      reason.length < 3 ? invalid('a reason of at least 3 characters is required') : null;
+    const key = (args.p_idempotency_key ?? null) as string | null;
+    const keyErr = () =>
+      key !== null && !/^[A-Za-z0-9._-]{1,128}$/.test(key)
+        ? invalid('idempotency key must be 1-128 ASCII characters from A-Z a-z 0-9 . _ -')
+        : null;
+    const doc = this.tables.catalog_docs.find((d) => d.kind === 'product' && d.id === pid);
+    const level = levels.find((l) => l.product_id === pid);
+    const notInit = () => fail('IS001', 'stock_not_initialized', pid);
+
+    const refreshSnapshot = (l: Row) => {
+      const data = doc?.data as { sku?: string; name?: { ar?: string } } | undefined;
+      if (data?.name?.ar?.trim()) l.product_name = data.name.ar.trim();
+      if (data?.sku?.trim()) l.product_sku = data.sku.trim();
+    };
+    const write = (
+      l: Row,
+      kind: string,
+      quantity: number,
+      delta: number,
+      extra: { reference?: string | null; order_id?: string | null; key?: string | null } = {},
+    ) => {
+      refreshSnapshot(l);
+      const before = l.on_hand as number;
+      l.on_hand = before + delta;
+      this.movementSeq += 1;
+      const row: Row = {
+        id: `mv-${this.movementSeq}`,
+        seq: this.movementSeq,
+        product_id: pid,
+        product_name: l.product_name ?? null,
+        product_sku: l.product_sku ?? null,
+        kind,
+        quantity,
+        qty_delta: delta,
+        qty_before: before,
+        qty_after: before + delta,
+        reason,
+        reference: extra.reference ?? null,
+        order_id: extra.order_id ?? null,
+        idempotency_key: extra.key ?? null,
+        override: false,
+        shortfall: 0,
+        override_grant_id: null,
+        actor: ADMIN_ID,
+        actor_email: 'admin@example.test',
+        created_at: new Date(Date.UTC(2026, 0, 1) + this.movementSeq * 60_000).toISOString(),
+      };
+      moves.push(row);
+      return row;
+    };
+    const result = (m: Row, replayed = false) => ({
+      status: replayed ? 'replayed' : 'recorded',
+      movement_id: m.id,
+      product_id: m.product_id,
+      kind: m.kind,
+      quantity: m.quantity,
+      qty_delta: m.qty_delta,
+      qty_before: m.qty_before,
+      qty_after: m.qty_after,
+    });
+    // a reused key is accepted only for the identical request
+    const replay = (compare: (m: Row) => string[]) => {
+      if (key === null) return null;
+      const m = moves.find((x) => x.idempotency_key === key);
+      if (!m) return null;
+      const diff = compare(m);
+      if (diff.length > 0) {
+        return fail(
+          'IS005',
+          'idempotency_key_reuse',
+          `idempotency key already used for a different request (differs: ${diff.join(', ')})`,
+        );
+      }
+      return ok(result(m, true));
+    };
+    const differs = (pairs: Array<[string, boolean]>) => pairs.filter(([, d]) => d).map(([n]) => n);
+
+    if (name === 'inventory_set_opening') {
+      const r = reasonErr();
+      if (r) return r;
+      if (!int(args.p_quantity, 0, 10_000_000)) return invalid('quantity must be a whole number between 0 and 10000000');
+      if (!doc) return invalid('unknown product');
+      if (level) {
+        return ok({ status: 'exists', product_id: pid, on_hand: level.on_hand, requested: args.p_quantity });
+      }
+      const data = doc.data as { sku?: string; name?: { ar?: string } };
+      const l: Row = {
+        product_id: pid,
+        on_hand: 0,
+        low_threshold: 0,
+        product_name: data.name?.ar ?? null,
+        product_sku: data.sku ?? null,
+      };
+      levels.push(l);
+      const m = write(l, 'opening', args.p_quantity as number, args.p_quantity as number, { key: `opening:${pid}` });
+      return ok({ status: 'created', product_id: pid, on_hand: m.qty_after, requested: args.p_quantity });
+    }
+
+    if (name === 'inventory_set_threshold') {
+      if (!int(args.p_threshold, 0, 10_000_000)) return invalid('threshold must be a whole number >= 0');
+      if (!level) return notInit();
+      level.low_threshold = args.p_threshold;
+      return ok({ status: 'updated', product_id: pid, low_threshold: args.p_threshold });
+    }
+
+    // the remaining operations: reason, key, then the balance row
+    const r1 = reasonErr() ?? keyErr();
+    if (r1) return r1;
+
+    if (name === 'inventory_adjust') {
+      if (!int(args.p_counted, 0, 100_000_000)) return invalid('counted quantity must be a whole number >= 0');
+      if (!level) return notInit();
+      const rp = replay((m) =>
+        differs([
+          ['product', m.product_id !== pid],
+          ['operation', m.kind !== 'adjustment'],
+          ['counted', m.qty_after !== args.p_counted],
+          ['reason', m.reason !== reason],
+        ]),
+      );
+      if (rp) return rp;
+      const delta = (args.p_counted as number) - (level.on_hand as number);
+      if (delta === 0) return ok({ status: 'unchanged', product_id: pid, on_hand: level.on_hand });
+      return ok(result(write(level, 'adjustment', Math.abs(delta), delta, { key })));
+    }
+
+    if (name === 'inventory_receive') {
+      if (!int(args.p_quantity, 1, 10_000_000)) return invalid('quantity must be a whole number between 1 and 10000000');
+      const ref = typeof args.p_reference === 'string' ? args.p_reference : null;
+      if (ref !== null && ref.length > 200) return invalid('reference is too long');
+      if (!level) return notInit();
+      const rp = replay((m) =>
+        differs([
+          ['product', m.product_id !== pid],
+          ['operation', m.kind !== 'receipt'],
+          ['quantity', m.quantity !== args.p_quantity],
+          ['reference', (m.reference ?? null) !== (ref?.trim() ? ref.trim() : null)],
+          ['reason', m.reason !== reason],
+        ]),
+      );
+      if (rp) return rp;
+      if ((level.on_hand as number) + (args.p_quantity as number) > 100_000_000) return invalid('resulting quantity is out of range');
+      return ok(result(write(level, 'receipt', args.p_quantity as number, args.p_quantity as number, { reference: ref?.trim() ? ref.trim() : null, key })));
+    }
+
+    if (name === 'inventory_record_return') {
+      if (args.p_resellable === null || args.p_resellable === undefined) {
+        return invalid('choose whether the returned item is resaleable or damaged');
+      }
+      if (!int(args.p_quantity, 1, 10_000_000)) return invalid('quantity must be a whole number between 1 and 10000000');
+      if (!level) return notInit();
+      const orderId = (args.p_order_id ?? null) as string | null;
+      const rp = replay((m) =>
+        differs([
+          ['product', m.product_id !== pid],
+          ['operation', m.kind !== 'return_restock' && m.kind !== 'return_damaged'],
+          ['classification', (m.kind === 'return_restock') !== (args.p_resellable === true) && (m.kind === 'return_restock' || m.kind === 'return_damaged')],
+          ['quantity', m.quantity !== args.p_quantity],
+          ['order', (m.order_id ?? null) !== orderId],
+          ['reason', m.reason !== reason],
+        ]),
+      );
+      if (rp) return rp;
+      if (orderId !== null) {
+        const order = this.tables.orders.find((o) => o.id === orderId);
+        if (!order) return invalid('unknown order');
+        const sold = ((order.lines as Row[]) ?? [])
+          .filter((l) => l.productId === pid)
+          .reduce((n, l) => n + (Number(l.qty) || 0), 0);
+        if (sold === 0) return invalid('the product is not part of that order');
+        const returned = moves
+          .filter((m) => m.order_id === orderId && m.product_id === pid && (m.kind === 'return_restock' || m.kind === 'return_damaged'))
+          .reduce((n, m) => n + (m.quantity as number), 0);
+        if (returned + (args.p_quantity as number) > sold) {
+          return invalid(`return exceeds the sold quantity (${sold} sold, ${returned} already returned)`);
+        }
+      }
+      const q = args.p_quantity as number;
+      if (args.p_resellable === true) {
+        if ((level.on_hand as number) + q > 100_000_000) return invalid('resulting quantity is out of range');
+        return ok(result(write(level, 'return_restock', q, q, { order_id: orderId, key })));
+      }
+      return ok(result(write(level, 'return_damaged', q, 0, { order_id: orderId, key })));
+    }
+
     return fail('42883', `function ${name} does not exist`);
   }
 
@@ -546,6 +990,14 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
     this.filters.push((r) => r[col] === val);
     return this;
   }
+  gte(col: string, val: unknown) {
+    this.filters.push((r) => (r[col] as string | number) >= (val as string | number));
+    return this;
+  }
+  lte(col: string, val: unknown) {
+    this.filters.push((r) => (r[col] as string | number) <= (val as string | number));
+    return this;
+  }
   in(col: string, vals: unknown[]) {
     this.filters.push((r) => vals.includes(r[col]));
     return this;
@@ -599,8 +1051,8 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
         return { data: null, error: { code: '42703', message: 'column orders.source does not exist' } };
       }
       // anon has no privileges on the internal pricing table at all
-      if (this.table === 'product_internal_pricing' && backend.role === 'anon') {
-        return { data: null, error: { code: '42501', message: 'permission denied for table product_internal_pricing' } };
+      if ((this.table === 'product_internal_pricing' || /^(stock_|inventory_)/.test(this.table)) && backend.role === 'anon') {
+        return { data: null, error: { code: '42501', message: `permission denied for table ${this.table}` } };
       }
       let out = rows.filter((r) => backend.visible(this.table, r) && matches(r));
       for (const o of [...this.orderBy].reverse()) {
@@ -621,6 +1073,10 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
     if (this.table === 'catalog_docs' || this.table === 'app_settings' || this.table === 'product_internal_pricing') {
       return denied('permission denied for table ' + this.table);
     }
+    // inventory tables are written only by the SECURITY DEFINER RPCs, never directly
+    if (/^(stock_|inventory_)/.test(this.table)) {
+      return denied('permission denied for table ' + this.table);
+    }
 
     if (this.mode === 'insert') {
       const list = Array.isArray(this.payload) ? this.payload : [this.payload as Row];
@@ -632,6 +1088,10 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
           if (r.source === 'in_store') {
             const bad = backend.inStoreInsertError(r);
             if (bad) return { data: null, error: bad };
+            if (backend.inventoryOrders && r.status === 'sold') {
+              const stock = backend.orderStock(r, 'create_in_store_order', backend.overrideActive);
+              if (stock) return { data: null, error: { code: stock.code, message: stock.message, details: stock.details } };
+            }
           } else if (r.status !== 'pending' || (r.source !== undefined && r.source !== 'online')) {
             return denied();
           }
@@ -673,6 +1133,14 @@ class Query implements PromiseLike<{ data: unknown; error: unknown }> {
     if (this.mode === 'update') {
       // RLS: a row the role cannot see/update is simply not matched.
       const targets = rows.filter((r) => backend.visible(this.table, r) && canWrite && matches(r));
+      if (backend.inventoryOrders && this.table === 'orders' && (this.payload as Row).status === 'delivered') {
+        for (const t of targets) {
+          if (t.source !== 'in_store' && t.status !== 'delivered') {
+            const stock = backend.orderStock(t, 'deliver_order', backend.overrideActive);
+            if (stock) return { data: null, error: { code: stock.code, message: stock.message, details: stock.details } };
+          }
+        }
+      }
       for (const t of targets) Object.assign(t, jsonb(clone(this.payload as Row)));
       return { data: this.returning ? this.project(targets) : null, error: null };
     }
@@ -755,6 +1223,8 @@ export const supabase = {
     return new Query(table);
   },
   async rpc(name: string, args: Row = {}) {
+    // logged BEFORE any injected fault, so attempts that fail early are visible too
+    backend.rpcLog.push({ name, args });
     const fault = backend.begin(`rpc:${name}`);
     if (fault) return { data: fault.hasData ? fault.data : null, error: fault.error };
     const result = backend.rpc(name, args);

@@ -24,6 +24,9 @@ import { AdminDashboardPage } from '../../features/admin/dashboard/AdminDashboar
 import { OrdersPage } from '../../features/admin/orders/OrdersPage';
 import { OrderDetailsPage } from '../../features/admin/orders/OrderDetailsPage';
 import { InStoreOrderPage } from '../../features/admin/orders/InStoreOrderPage';
+import { AdminInventoryPage } from '../../features/admin/inventory/AdminInventoryPage';
+import { InventoryMovementsPage } from '../../features/admin/inventory/InventoryMovementsPage';
+import { InventoryReconciliationPage } from '../../features/admin/inventory/InventoryReconciliationPage';
 import { AdminPlaceholderPage } from '../../features/admin/components/AdminPlaceholderPage';
 import { AdminProductsPage } from '../../features/admin/catalog/AdminProductsPage';
 import { ProductFormPage } from '../../features/admin/catalog/ProductFormPage';
@@ -85,6 +88,9 @@ export const router = createBrowserRouter(
       { path: 'products/new', element: <ProductFormPage /> },
       { path: 'products/:productId', element: <AdminProductDetailsPage /> },
       { path: 'products/:productId/edit', element: <ProductFormPage /> },
+      { path: 'inventory', element: <AdminInventoryPage /> },
+      { path: 'inventory/movements', element: <InventoryMovementsPage /> },
+      { path: 'inventory/reconciliation', element: <InventoryReconciliationPage /> },
       { path: 'categories', element: <AdminCategoriesPage /> },
       { path: 'categories/new', element: <TaxonomyFormPage kind="category" /> },
       { path: 'categories/:categoryId/edit', element: <TaxonomyFormPage kind="category" /> },
@@ -102,7 +108,7 @@ export const router = createBrowserRouter(
       ...adminNav
         .filter(
           (i) =>
-            !['dashboard', 'orders', 'products', 'categories', 'collections', 'homepage', 'navigation', 'media', 'attributes', 'migration'].includes(i.key),
+            !['dashboard', 'orders', 'products', 'inventory', 'categories', 'collections', 'homepage', 'navigation', 'media', 'attributes', 'migration'].includes(i.key),
         )
         .map((i) => ({
           path: i.path.replace('/admin/', ''),

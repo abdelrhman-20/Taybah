@@ -1,4 +1,5 @@
 import {
+  Boxes,
   DatabaseBackup,
   FolderTree,
   Images,
@@ -26,6 +27,7 @@ export const adminNav: AdminNavItem[] = [
   { key: 'dashboard', label: 'لوحة التحكم', path: '/admin', icon: LayoutDashboard },
   { key: 'orders', label: 'الطلبات', path: '/admin/orders', icon: ShoppingCart },
   { key: 'products', label: 'المنتجات', path: '/admin/products', icon: Package },
+  { key: 'inventory', label: 'المخزون', path: '/admin/inventory', icon: Boxes },
   { key: 'categories', label: 'التصنيفات', path: '/admin/categories', icon: FolderTree },
   { key: 'collections', label: 'المجموعات', path: '/admin/collections', icon: Layers },
   { key: 'homepage', label: 'الصفحة الرئيسية', path: '/admin/homepage', icon: PanelsTopLeft },

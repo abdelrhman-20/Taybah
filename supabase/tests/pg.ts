@@ -36,6 +36,9 @@ export async function baseDb(opts: { admin?: boolean } = {}): Promise<PGlite> {
     create table auth.users(id uuid primary key);
     create function auth.uid() returns uuid language sql stable as $$
       select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+    -- auth.jwt(): the claims of the current request (Supabase reads the same GUC)
+    create function auth.jwt() returns jsonb language sql stable as $$
+      select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $$;
     create table net.calls(url text, headers jsonb);
     create function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}',
       timeout_milliseconds int default 1000) returns bigint language sql as
@@ -45,6 +48,7 @@ export async function baseDb(opts: { admin?: boolean } = {}): Promise<PGlite> {
     grant all on all tables in schema net, vault to anon, authenticated, service_role;
     alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
     alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
+    alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
     create table public.admins (user_id uuid primary key references auth.users(id));
     alter table public.admins enable row level security;
     create function public.is_admin() returns boolean language sql stable security definer
@@ -66,8 +70,12 @@ export async function rollback(db: PGlite) {
   await db.exec('rollback');
 }
 
+// Also sets request.jwt.claims (read by auth.jwt()): { sub, email } with a
+// deterministic test e-mail `<sub>@example.test` when a user is given.
 export async function as(db: PGlite, role: 'anon' | 'authenticated' | 'service_role' | 'postgres', sub?: string) {
-  await db.exec(`reset role; select set_config('request.jwt.claim.sub', '${sub ?? ''}', false)`);
+  const claims = sub ? JSON.stringify({ sub, email: `${sub}@example.test` }) : '';
+  await db.exec(`reset role; select set_config('request.jwt.claim.sub', '${sub ?? ''}', false),
+    set_config('request.jwt.claims', '${claims}', false)`);
   if (role !== 'postgres') await db.exec(`set role ${role}`);
 }
 
@@ -78,14 +86,14 @@ export async function fails(
   db: PGlite,
   sql: string,
   params: unknown[] = [],
-): Promise<{ code: string; message: string }> {
+): Promise<{ code: string; message: string; detail: string }> {
   await db.exec('savepoint expected_failure');
   try {
     await db.query(sql, params);
   } catch (e) {
     await db.exec('rollback to savepoint expected_failure');
-    const err = e as { code?: string; message?: string };
-    return { code: err.code ?? '', message: err.message ?? '' };
+    const err = e as { code?: string; message?: string; detail?: string };
+    return { code: err.code ?? '', message: err.message ?? '', detail: err.detail ?? '' };
   }
   await db.exec('release savepoint expected_failure');
   throw new Error(`expected statement to fail but it succeeded: ${sql}`);

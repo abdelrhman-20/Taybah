@@ -81,3 +81,22 @@ describe('stableJson', () => {
     expect(stableStringify({ a: 1, b: undefined })).toBe(stableStringify({ a: 1 }));
   });
 });
+
+describe('inventory error codes (migration 0009)', () => {
+  it('maps IS001 to stock_not_initialized and IS005 to idempotency_key_reuse', () => {
+    expect(classifyError({ code: 'IS001', message: 'stock_not_initialized', details: 'p1' }).code).toBe('stock_not_initialized');
+    const reuse = classifyError({ code: 'IS005', message: 'idempotency_key_reuse', details: 'differs: counted' });
+    expect(reuse.code).toBe('idempotency_key_reuse');
+    expect(reuse.detail).toContain('differs: counted');
+  });
+
+  it('gives both a non-empty Arabic message that says nothing was saved', () => {
+    for (const code of ['stock_not_initialized', 'idempotency_key_reuse'] as const) {
+      const msg = describePersistenceError(new PersistenceError(code));
+      expect(msg.length).toBeGreaterThan(10);
+      expect(msg).toMatch(/[\u0600-\u06FF]/);
+      expect(msg).toMatch(/لم يُ(حفظ|سجَّل)/);
+    }
+  });
+});
+

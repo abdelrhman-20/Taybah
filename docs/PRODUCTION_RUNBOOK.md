@@ -12,6 +12,7 @@ State when this was written:
 | Migration `0006_catalog_documents.sql` | **Not applied** (production answers `404 PGRST205` for `catalog_docs`/`app_settings`). |
 | Migration `0005_order_email_outbox.sql` | **Not applied** (no `order_email_outbox`). |
 | Migration `0008_in_store_orders.sql` | **Not applied.** Adds `orders.source`/`note`, status `sold`, the admin in-store insert policy. Requires 0001, 0003, 0005, 0006 (so Phases A and C first). **Never re-apply 0005 after it.** See Phase F. |
+| Migration `0009_inventory.sql` | **Not applied, not scheduled.** Inventory phase 1 (tables and admin operations only; changes no order behaviour). Requires 0001, 0003, 0006 **with the catalog migrated** (the `catalog_initialized` object from `catalog_mark_initialized()` and at least one valid product), and 0008; it also **refuses to run** if `PUBLIC`/`anon`/`authenticated` have `CREATE` on schema `public` or `auth` (it will not change privileges for you). Never re-apply 0005 after 0008. |
 | Edge Function `process-order-emails` | **Not deployed**. The old `send-order-status-email` function and trigger from `0002` are still live. |
 | Resend | `RESEND_API_KEY` secret exists (per project notes); production sending **never verified**. |
 
@@ -375,3 +376,41 @@ the wholesale field.
 
 See the comment at the end of the migration (delete in-store orders first, then
 restore the `enqueue_order_email()` definition from `0005`).
+
+## Phase G — Inventory (migrations 0009 and 0010) — **NOT EXECUTED**
+
+> Nothing below has been run against any real project. It is a procedure for the owner,
+> to be done only after explicit approval. Applying **0010 is the activation** of stock
+> deduction: from that commit, every delivery and in-store sale deducts stock and is
+> refused when a product has no opening balance or stock is short.
+
+Ordered steps (each depends on the previous):
+
+1. **Phase 0-F are done** (0001, 0003, 0005, 0006 + catalog migrated, 0008). Never
+   re-apply 0005 after 0008.
+2. **Read-only checks**: untrusted roles have no `CREATE` on `public`/`auth` (query in
+   `docs/INVENTORY_SETUP.md`); take a database backup / point-in-time-recovery marker.
+3. **Apply `0009_inventory.sql`** (SQL Editor). Changes nothing about orders.
+4. **Deploy the app** (after 0009; deploying earlier shows the "migration missing" state).
+5. **Count the warehouse physically.** Enter an explicit opening balance for every
+   product (zero counts) via `/admin/inventory` or the import on
+   `/admin/inventory/reconciliation` (dry run first). Account for goods shipped but not yet
+   delivered.
+6. **Decide every in-flight / ambiguous order** on the reconciliation page (deduct on
+   delivery vs already accounted), with a reason. Leave nothing guessed.
+7. **Check readiness (read-only)**: `select * from inventory_activation_blockers();` as an
+   admin -> must return **no rows**; `select * from inventory_reconcile_summary();` ->
+   `clean = true`.
+8. **Quiet window**: no deliveries/in-store sales in flight; decide when to activate.
+9. **Apply `0010_inventory_orders.sql`** - the activation. If the guard lists blockers it
+   changes nothing; fix them and retry.
+10. **Verify with one supervised delivery** of a real order: the balance falls by exactly the
+    ordered quantity, one `sale` movement appears, a second delivery attempt changes
+    nothing; an in-store sale deducts; an e-mail for an in-store sale is still suppressed.
+11. **Run `inventory_reconcile_summary()`** again -> `clean = true`.
+
+**Before step 9 (required, not optional):** complete the verification checklist in
+`docs/INVENTORY_SETUP.md` (six multi-connection scenarios on a disposable local PostgreSQL,
+plus the manual RTL/responsive checks). Both have never been run; until they pass the system is
+NOT production-ready. Rollback of 0010: the
+comment at the end of the file (stock already deducted stays; reconcile by hand).

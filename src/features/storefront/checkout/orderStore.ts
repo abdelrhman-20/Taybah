@@ -290,11 +290,12 @@ export async function createInStoreOrder(input: InStoreOrderInput): Promise<Gues
   }
 }
 
-async function insertInStoreOrder(input: InStoreOrderInput): Promise<GuestOrder> {
-  if (!supabaseConfigured) throw new PersistenceError('unconfigured');
+// The row an in-store sale stores (shared by the direct insert below and by the
+// admin shortage-override RPC, which inserts the very same order).
+export function buildInStoreOrderPayload(input: InStoreOrderInput) {
   const subtotal = input.lines.reduce((n, l) => n + l.price * l.qty, 0);
   const note = input.note.trim();
-  const payload = {
+  return {
     id: input.id,
     ref: input.ref,
     status: 'sold' as const,
@@ -307,6 +308,12 @@ async function insertInStoreOrder(input: InStoreOrderInput): Promise<GuestOrder>
     total: subtotal,
     note: note === '' ? null : note,
   };
+}
+
+async function insertInStoreOrder(input: InStoreOrderInput): Promise<GuestOrder> {
+  if (!supabaseConfigured) throw new PersistenceError('unconfigured');
+  const payload = buildInStoreOrderPayload(input);
+  const subtotal = payload.subtotal;
   const { error } = await withTimeout(supabase.from('orders').insert(payload));
   if (error) {
     // Same idempotency rule as online checkout: a clash on THIS order's id
@@ -315,16 +322,21 @@ async function insertInStoreOrder(input: InStoreOrderInput): Promise<GuestOrder>
     const alreadyCreated = error.code === '23505' && /orders_pkey/.test(error.message ?? '');
     if (!alreadyCreated) throw classifyError(error);
   }
-  // Read the row back: success is reported only for what the database holds.
+  return confirmStoredInStoreOrder(input.id, subtotal);
+}
+
+// Reads the in-store order back: success is reported only for what the database holds
+// (also used after the admin shortage-override RPC created it).
+export async function confirmStoredInStoreOrder(id: string, expectedTotal: number): Promise<GuestOrder> {
   const { data, error: readError } = await withTimeout(
     supabase
       .from('orders')
       .select('id, ref, created_at, status, contact, address, delivery, lines, subtotal, total, source, note')
-      .eq('id', input.id),
+      .eq('id', id),
   );
   if (readError) throw classifyError(readError);
   const stored = ((data ?? []) as unknown as OrderRow[])[0];
-  if (!stored || stored.source !== 'in_store' || Number(stored.total) !== subtotal) {
+  if (!stored || stored.source !== 'in_store' || Number(stored.total) !== expectedTotal) {
     throw new PersistenceError('verify_failed', 'stored order does not match');
   }
   const saved = fromRow(stored);
