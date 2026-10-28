@@ -96,7 +96,7 @@ export function AdminLayout() {
           type="button"
           className={btn}
           onClick={() => {
-            void supabase.auth.signOut();
+            void supabase.auth.signOut({ scope: 'local' });
           }}
         >
           تسجيل الخروج

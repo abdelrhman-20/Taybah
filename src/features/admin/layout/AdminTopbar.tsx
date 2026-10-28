@@ -5,11 +5,17 @@ import { IconButton } from '../../shared/components/IconButton';
 import { supabase } from '../../../lib/supabase/client';
 import { useCatalog } from '../../storefront/catalog/catalogStore';
 import { adminNav } from './adminNav';
+import { ActivityList, ActivityToast } from '../activity/ActivityNotifications';
+import { useOwnerActivity } from '../activity/useOwnerActivity';
+import { markAllSeen } from '../activity/activityStore';
+import { OWNER_NAME, canViewProfit, useSessionEmail } from '../auth/profitAccess';
 
 export function AdminTopbar({ onMenu }: { onMenu: () => void }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const catalog = useCatalog();
+  const isOwner = canViewProfit(useSessionEmail());
+  const owner = useOwnerActivity(isOwner);
   const section = adminNav.find((i) =>
     i.path === '/admin' ? pathname === '/admin' : pathname.startsWith(i.path),
   );
@@ -43,9 +49,16 @@ export function AdminTopbar({ onMenu }: { onMenu: () => void }) {
     };
   }, [bellOpen]);
 
+  // Closing the bell counts as having read the team's changes.
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (wasOpen.current && !bellOpen && isOwner) void markAllSeen();
+    wasOpen.current = bellOpen;
+  }, [bellOpen, isOwner]);
+
   const signOut = async () => {
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch (e) {
       // Network trouble while revoking the session server-side: the local
       // session is still cleared by supabase-js, so leave the admin anyway
@@ -55,6 +68,7 @@ export function AdminTopbar({ onMenu }: { onMenu: () => void }) {
     navigate('/admin/login', { replace: true });
   };
   return (
+    <>
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-taupe/50 bg-white/95 px-4 backdrop-blur-sm sm:px-6">
       <div className="flex items-center gap-2">
         <span className="lg:hidden">
@@ -75,9 +89,9 @@ export function AdminTopbar({ onMenu }: { onMenu: () => void }) {
             aria-expanded={bellOpen}
           >
             <Bell className="size-5" aria-hidden="true" />
-            {missingSizes.length > 0 && (
+            {missingSizes.length + owner.unseen > 0 && (
               <span className="absolute -top-0.5 -end-0.5 flex size-4 items-center justify-center rounded-full bg-burgundy text-[10px] font-bold text-white">
-                {missingSizes.length}
+                {missingSizes.length + owner.unseen}
               </span>
             )}
           </IconButton>
@@ -86,6 +100,7 @@ export function AdminTopbar({ onMenu }: { onMenu: () => void }) {
               <h2 className="border-b border-taupe/60 px-4 py-3 text-sm font-semibold text-espresso">
                 الإشعارات
               </h2>
+              {isOwner && <ActivityList items={owner.items} />}
               {missingSizes.length === 0 ? (
                 <p className="px-4 py-6 text-center text-xs text-espresso/55">
                   لا إشعارات — بيانات المقاسات مكتملة لكل المنتجات.
@@ -123,14 +138,31 @@ export function AdminTopbar({ onMenu }: { onMenu: () => void }) {
         <IconButton label="تسجيل الخروج" onClick={signOut}>
           <LogOut className="size-5" aria-hidden="true" />
         </IconButton>
+        {isOwner ? (
+          <span className="ms-2 flex items-center gap-2" title={`حساب المالك — ${OWNER_NAME}`}>
+            <span className="hidden text-sm font-medium text-espresso sm:inline">{OWNER_NAME}</span>
+            <span className="hidden rounded-full bg-gold/15 px-2 py-0.5 text-[10px] font-semibold text-gold sm:inline">
+              المالك
+            </span>
+            <span
+              className="flex size-9 items-center justify-center rounded-full bg-espresso text-xs font-semibold text-gold ring-2 ring-gold"
+              aria-label={OWNER_NAME}
+            >
+              N
+            </span>
+          </span>
+        ) : (
         <span
-          className="ms-1 flex size-9 items-center justify-center rounded-full bg-espresso text-xs font-semibold text-porcelain"
-          aria-label="فريق العمل"
-          title="حساب فريق العمل"
-        >
-          ط
-        </span>
+            className="ms-1 flex size-9 items-center justify-center rounded-full bg-espresso text-xs font-semibold text-porcelain"
+            aria-label="فريق العمل"
+            title="حساب فريق العمل"
+          >
+            ط
+          </span>
+        )}
       </div>
     </header>
+    <ActivityToast activity={owner.toast} onClose={owner.dismissToast} />
+    </>
   );
 }

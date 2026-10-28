@@ -11,6 +11,7 @@ import {
   Settings,
   ShoppingCart,
   SwatchBook,
+  TrendingUp,
   TicketPercent,
   Users,
   type LucideIcon,
@@ -21,6 +22,8 @@ export interface AdminNavItem {
   label: string;
   path: string;
   icon: LucideIcon;
+  // Shown only to the account allowed to see profit (see auth/profitAccess.ts).
+  profitOnly?: boolean;
 }
 
 export const adminNav: AdminNavItem[] = [
@@ -28,6 +31,7 @@ export const adminNav: AdminNavItem[] = [
   { key: 'orders', label: 'الطلبات', path: '/admin/orders', icon: ShoppingCart },
   { key: 'products', label: 'المنتجات', path: '/admin/products', icon: Package },
   { key: 'inventory', label: 'المخزون', path: '/admin/inventory', icon: Boxes },
+  { key: 'profit', label: 'الأرباح', path: '/admin/profit', icon: TrendingUp, profitOnly: true },
   { key: 'categories', label: 'التصنيفات', path: '/admin/categories', icon: FolderTree },
   { key: 'collections', label: 'المجموعات', path: '/admin/collections', icon: Layers },
   { key: 'homepage', label: 'الصفحة الرئيسية', path: '/admin/homepage', icon: PanelsTopLeft },

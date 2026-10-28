@@ -25,6 +25,7 @@ import { OrdersPage } from '../../features/admin/orders/OrdersPage';
 import { OrderDetailsPage } from '../../features/admin/orders/OrderDetailsPage';
 import { InStoreOrderPage } from '../../features/admin/orders/InStoreOrderPage';
 import { AdminStockPage } from '../../features/admin/inventory/AdminStockPage';
+import { AdminProfitPage } from '../../features/admin/profit/AdminProfitPage';
 import { AdminPlaceholderPage } from '../../features/admin/components/AdminPlaceholderPage';
 import { AdminProductsPage } from '../../features/admin/catalog/AdminProductsPage';
 import { ProductFormPage } from '../../features/admin/catalog/ProductFormPage';
@@ -87,6 +88,7 @@ export const router = createBrowserRouter(
       { path: 'products/:productId', element: <AdminProductDetailsPage /> },
       { path: 'products/:productId/edit', element: <ProductFormPage /> },
       { path: 'inventory', element: <AdminStockPage /> },
+      { path: 'profit', element: <AdminProfitPage /> },
       { path: 'categories', element: <AdminCategoriesPage /> },
       { path: 'categories/new', element: <TaxonomyFormPage kind="category" /> },
       { path: 'categories/:categoryId/edit', element: <TaxonomyFormPage kind="category" /> },
@@ -104,7 +106,7 @@ export const router = createBrowserRouter(
       ...adminNav
         .filter(
           (i) =>
-            !['dashboard', 'orders', 'products', 'inventory', 'categories', 'collections', 'homepage', 'navigation', 'media', 'attributes', 'migration'].includes(i.key),
+            !['dashboard', 'orders', 'products', 'inventory', 'profit', 'categories', 'collections', 'homepage', 'navigation', 'media', 'attributes', 'migration'].includes(i.key),
         )
         .map((i) => ({
           path: i.path.replace('/admin/', ''),

@@ -10,6 +10,9 @@ import { reloadOrders, useOrders, useOrdersLoadState } from '../../storefront/ch
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
 import { formatPrice } from '../../shared/utils/format';
+import { canViewProfit, useSessionEmail } from '../auth/profitAccess';
+import { AnimatedNumber } from '../components/AnimatedNumber';
+import { OwnerSummaryCard } from '../profit/OwnerSummaryCard';
 
 function dateOf(iso: string): string {
   return new Date(iso).toLocaleDateString('ar-EG', {
@@ -21,6 +24,7 @@ function dateOf(iso: string): string {
 
 export function AdminDashboardPage() {
   const orders = useOrders();
+  const isOwner = canViewProfit(useSessionEmail());
   const loadState = useOrdersLoadState();
   // A failed load must never read as «0 orders»: counts show an em dash and a
   // retry banner explains why.
@@ -48,6 +52,7 @@ export function AdminDashboardPage() {
 
   return (
     <div className="mx-auto max-w-5xl">
+      {isOwner && <OwnerSummaryCard />}
       <AdminPageHeader
         title="نظرة عامة"
         description="إحصاءات مباشرة من الطلبات التجريبية المُرسلة عبر إتمام الطلب كضيف. لا تُعرض مقاييس إيرادات أو عملاء أو محاولات — تُحسب الطلبات المُرسلة بنجاح فقط."
@@ -72,15 +77,19 @@ export function AdminDashboardPage() {
       )}
 
       <ul className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {stats.map(({ label, value, icon: Icon }) => (
-          <li key={label} className="rounded border border-taupe/70 bg-white p-5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium tracking-wide text-espresso/55">
-                {label}
-              </span>
-              <Icon className="size-4.5 text-burgundy" aria-hidden />
-            </div>
-            <p className="mt-3 font-display text-3xl text-espresso">{failed ? '—' : value}</p>
+        {stats.map(({ label, value, icon: Icon }, i) => (
+          <li
+            key={label}
+            className="animate-fade-up group rounded-lg border border-taupe/70 bg-white p-4 text-center sm:p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md"
+            style={{ animationDelay: `${i * 90}ms` }}
+          >
+            <span className="mx-auto flex size-11 items-center justify-center rounded-full bg-burgundy/10 text-burgundy transition duration-300 group-hover:scale-110">
+              <Icon className="size-5" aria-hidden />
+            </span>
+            <p className="mt-3 font-display text-3xl text-espresso sm:text-4xl">
+              {failed ? '—' : <AnimatedNumber value={value} />}
+            </p>
+            <span className="mt-1 block text-xs font-medium tracking-wide text-espresso/55">{label}</span>
           </li>
         ))}
       </ul>

@@ -89,7 +89,7 @@ describe('Orders page — in-store sales', () => {
     expect(within(sale).getByText('استلام من المتجر')).toBeTruthy();
     expect(within(rowOf('TYB-ONLINE')).getByText('أونلاين')).toBeTruthy();
     expect(within(rowOf('TYB-LEGACY')).getByText('أونلاين')).toBeTruthy();
-    expect(within(rowOf('TYB-LEGACY')).getByText('تم التسليم')).toBeTruthy(); // meaning unchanged
+    expect(within(rowOf('TYB-LEGACY')).getByText('تم الاستلام')).toBeTruthy(); // meaning unchanged
   });
 
   it('filters by source and by the new status together with the old statuses', async () => {
@@ -101,7 +101,7 @@ describe('Orders page — in-store sales', () => {
     await userEvent.selectOptions(screen.getByLabelText('التصفية حسب المصدر'), 'كل المصادر');
     await userEvent.selectOptions(screen.getByLabelText('التصفية حسب الحالة'), 'تم البيع');
     expect(within(table()).getAllByRole('row')).toHaveLength(2); // header + the sale
-    await userEvent.selectOptions(screen.getByLabelText('التصفية حسب الحالة'), 'تم التسليم');
+    await userEvent.selectOptions(screen.getByLabelText('التصفية حسب الحالة'), 'تم الاستلام');
     expect(within(table()).getByText('TYB-LEGACY')).toBeTruthy();
     expect(within(table()).queryByText('TYB-INSTORE')).toBeNull();
   });
@@ -156,7 +156,7 @@ describe('Order details — in-store sale', () => {
   it('online orders keep the existing statuses and never offer «تم البيع»', async () => {
     const b = await freshBackend('admin');
     await mountDetails(b, online);
-    expect(statusOptions()).toEqual(['قيد الانتظار', 'مؤكد', 'قيد التجهيز', 'تم الشحن', 'تم التسليم', 'ملغٍ']);
+    expect(statusOptions()).toEqual(['قيد الانتظار', 'مؤكد', 'قيد التجهيز', 'تم الشحن', 'تم الاستلام', 'ملغٍ']);
     expect(screen.getAllByText('أونلاين').length).toBeGreaterThan(0);
     expect(screen.getByText('رسوم التوصيل')).toBeTruthy();
   });

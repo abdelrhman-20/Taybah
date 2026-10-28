@@ -3,8 +3,10 @@ import { NavLink } from 'react-router';
 import { X } from 'lucide-react';
 import { IconButton } from '../../shared/components/IconButton';
 import { adminNav } from './adminNav';
+import { canViewProfit, useSessionEmail } from '../auth/profitAccess';
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+  const showProfit = canViewProfit(useSessionEmail());
   return (
     <>
       <div className="flex h-16 items-center border-b border-taupe/50 px-5">
@@ -15,7 +17,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </div>
       <nav aria-label="الإدارة" className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="flex flex-col gap-0.5">
-          {adminNav.map((item) => (
+          {adminNav.filter((item) => !item.profitOnly || showProfit).map((item) => (
             <li key={item.key}>
               <NavLink
                 to={item.path}

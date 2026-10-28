@@ -43,7 +43,7 @@ describe('statusesForSource', () => {
     expect(ORDER_STATUSES).toContain('sold');
     expect(ORDER_STATUS_LABELS_AR.sold).toBe('تم البيع');
     // existing labels are untouched
-    expect(ORDER_STATUS_LABELS_AR.delivered).toBe('تم التسليم');
+    expect(ORDER_STATUS_LABELS_AR.delivered).toBe('تم الاستلام');
     expect(ORDER_STATUS_LABELS_AR.cancelled).toBe('ملغٍ');
   });
 });

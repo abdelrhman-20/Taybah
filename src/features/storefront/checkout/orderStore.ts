@@ -60,7 +60,7 @@ export const ORDER_STATUS_LABELS_AR: Record<OrderStatus, string> = {
   confirmed: 'مؤكد',
   processing: 'قيد التجهيز',
   shipped: 'تم الشحن',
-  delivered: 'تم التسليم',
+  delivered: 'تم الاستلام',
   cancelled: 'ملغٍ',
   sold: 'تم البيع',
 };
@@ -183,7 +183,7 @@ export function getOrdersLoadState(): OrdersLoadState {
 
 let loadPromise: Promise<void> | null = null;
 
-async function fetchAll(): Promise<void> {
+async function fetchAll(background: boolean): Promise<void> {
   if (!supabaseConfigured) return;
   const { data: sessionData } = await supabase.auth.getSession();
   if (!sessionData.session) {
@@ -192,7 +192,8 @@ async function fetchAll(): Promise<void> {
     setLoadState({ status: 'idle' });
     return;
   }
-  setLoadState({ status: 'loading' });
+  // A background re-read (live updates) of an already-loaded list shows no spinner.
+  if (!(background && loadState.status === 'ready')) setLoadState({ status: 'loading' });
   try {
     const base = 'id, ref, created_at, status, contact, address, delivery, lines, subtotal, total';
     let result: { data: unknown; error: { code?: string | null } | null } = await withTimeout(
@@ -212,13 +213,16 @@ async function fetchAll(): Promise<void> {
   } catch (e) {
     const err = classifyError(e);
     console.error('Failed to load orders:', err.code, err.detail);
+    // A failed background re-read keeps the list that is already on screen.
+    if (background && loadState.status === 'ready') return;
     // Keep whatever was loaded before; the UI shows the error + retry.
     setLoadState({ status: 'error', code: err.code });
   }
 }
 
-export function reloadOrders(): Promise<void> {
-  loadPromise ??= fetchAll().finally(() => {
+// `background`: a silent live-update re-read (no spinner, a failure is not shown).
+export function reloadOrders(background = false): Promise<void> {
+  loadPromise ??= fetchAll(background).finally(() => {
     loadPromise = null;
   });
   return loadPromise;

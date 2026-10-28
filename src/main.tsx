@@ -3,7 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router';
 import { router } from './app/router';
 import { ErrorBoundary } from './features/shared/components/ErrorBoundary';
+import { startLiveSync } from './features/shared/liveSync';
 import './styles/globals.css';
+
+startLiveSync();
 
 // Last-resort catch-all — StorefrontLayout/AdminLayout each wrap their own
 // <Outlet/> with a boundary that keeps header/nav/sidebar usable, so this

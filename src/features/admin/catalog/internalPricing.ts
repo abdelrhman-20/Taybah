@@ -24,3 +24,26 @@ export async function fetchWholesalePrice(productId: string): Promise<number | n
   const n = Number(row.wholesale_price);
   return Number.isFinite(n) ? n : null;
 }
+
+// Every stored wholesale price, keyed by product id (admin profit report).
+// Products without a price are simply absent from the map.
+export async function fetchAllWholesalePrices(): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await withTimeout(
+      supabase
+        .from('product_internal_pricing')
+        .select('product_id, wholesale_price')
+        .order('product_id')
+        .range(from, from + PAGE - 1),
+    );
+    if (error) throw classifyError(error);
+    const rows = (data ?? []) as { product_id: string; wholesale_price: number | string }[];
+    for (const r of rows) {
+      const n = Number(r.wholesale_price);
+      if (Number.isFinite(n)) out.set(r.product_id, n);
+    }
+    if (rows.length < PAGE) return out;
+  }
+}
