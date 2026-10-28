@@ -25,6 +25,7 @@ import {
   writeDocs,
   type DocPut,
 } from './catalogDocs';
+import { getStockState, getStockVersion, subscribeStock } from './stockStore';
 import { getCartLines, type CartLine } from '../cart/useCart';
 import { getWishlistIds } from '../wishlist/useWishlist';
 import { getHomeContent } from '../home/homeStore';
@@ -95,26 +96,54 @@ function docData<T>(kind: 'product' | 'category' | 'collection'): T[] {
   return docsOfKind(kind).map((d) => structuredClone(d.data) as T);
 }
 
+// Tracked stock (migration 0009) overrides the manual availability of the units
+// it covers; untracked units keep their stored value.
+function applyStock(state: CatalogState): CatalogState {
+  for (const p of state.products) {
+    const own = getStockState(p.id, null);
+    if (own) p.availability = own;
+    for (const v of p.variants ?? []) {
+      const s = getStockState(p.id, v.id);
+      if (s) v.availability = s;
+    }
+  }
+  return state;
+}
+
 function derive(): CatalogState {
   const s = getDocsState();
   if (!s.initialized) return seedState();
-  return migrateCatalogState({
-    products: docData<CatalogProduct>('product'),
-    categories: docData<CatalogCategory>('category'),
-    collections: docData<CatalogCollection>('collection'),
-  });
+  return applyStock(
+    migrateCatalogState({
+      products: docData<CatalogProduct>('product'),
+      categories: docData<CatalogCategory>('category'),
+      collections: docData<CatalogCollection>('collection'),
+    }),
+  );
 }
 
-let cache: { version: number; value: CatalogState } | null = null;
+let cache: { version: number; stockVersion: number; value: CatalogState } | null = null;
 
 export function getCatalog(): CatalogState {
   const version = getDocsState().version;
-  if (!cache || cache.version !== version) cache = { version, value: derive() };
+  const stockVersion = getStockVersion();
+  if (!cache || cache.version !== version || cache.stockVersion !== stockVersion) {
+    cache = { version, stockVersion, value: derive() };
+  }
   return cache.value;
 }
 
+function subscribeCatalog(listener: () => void): () => void {
+  const a = subscribeDocs(listener);
+  const b = subscribeStock(listener);
+  return () => {
+    a();
+    b();
+  };
+}
+
 export function useCatalog(): CatalogState {
-  return useSyncExternalStore(subscribeDocs, getCatalog);
+  return useSyncExternalStore(subscribeCatalog, getCatalog);
 }
 
 // ---- public-discovery rule ---------------------------------------------

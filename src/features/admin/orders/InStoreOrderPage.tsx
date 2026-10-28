@@ -12,17 +12,9 @@ import { isVariantProduct } from '../../storefront/catalog/variants';
 import {
   buildOrderLines,
   createInStoreOrder,
-  type InStoreOrderInput,
   makeOrderRef,
 } from '../../storefront/checkout/orderStore';
 import { classifyError, describePersistenceError } from '../../../lib/persistence/errors';
-import { StockOverrideDialog } from '../inventory/StockOverrideDialog';
-import {
-  createInStoreOrderWithOverride,
-  describeStockRefusal,
-  parseShortfalls,
-  type Shortfall,
-} from '../inventory/inventoryOverrides';
 import { generateId } from '../../shared/utils/id';
 import { formatPrice } from '../../shared/utils/format';
 
@@ -134,10 +126,6 @@ export function InStoreOrderPage() {
   // attempt so retrying the SAME sale is idempotent (see saveOrder).
   const inFlight = useRef(false);
   const identity = useRef<{ fingerprint: string; id: string; ref: string } | null>(null);
-  // The exact sale the database refused for lack of stock, and the shortfall it reported:
-  // the admin may record it ONLY through the explicit, audited shortage override.
-  const pending = useRef<InStoreOrderInput | null>(null);
-  const [override, setOverride] = useState<Shortfall[] | null>(null);
 
   const units = useMemo(() => unitsOf(catalog.products), [catalog.products]);
   const results = useMemo(() => {
@@ -160,7 +148,6 @@ export function InStoreOrderPage() {
   const cartLines = picks
     .map((p) => ({ pick: p, resolved: resolvedByKey.get(p.key) }))
     .filter((x): x is { pick: Pick; resolved: ResolvedCartLine } => !!x.resolved && x.resolved.name !== null);
-  const nameOfProduct = (id: string) => cartLines.find((x) => x.resolved.product?.id === id)?.resolved.name?.ar ?? id;
   const total = cartLines.reduce((n, x) => n + x.resolved.unitPrice * x.pick.qty, 0);
 
   const add = (u: Unit) => {
@@ -194,39 +181,27 @@ export function InStoreOrderPage() {
       if (identity.current?.fingerprint !== fingerprint) {
         identity.current = { fingerprint, id: generateId(), ref: makeOrderRef() };
       }
-      const input: InStoreOrderInput = {
+      const saved = await createInStoreOrder({
         id: identity.current.id,
         ref: identity.current.ref,
         customerName: name,
         customerPhone: phone.replace(/[\s-]/g, ''),
         note,
         lines,
-      };
-      pending.current = input;
-      const saved = await createInStoreOrder(input);
+      });
       // Only now — after the database returned the stored row — leave the form.
       navigate(`/admin/orders/${saved.id}`);
     } catch (err) {
       const pe = classifyError(err);
-      console.error('In-store order failed:', pe.code);
-      if (pe.code === 'insufficient_stock') {
-        const list = parseShortfalls(pe.detail);
-        if (list.length > 0) {
-          setOverride(list);
-          setSubmitting(false);
-          inFlight.current = false;
-          return;
-        }
-      }
+      console.error('In-store order failed:', pe.code, pe.detail);
       // Only the database's own validation codes are translated; every other
       // failure keeps its generic, accurate message.
       setError(
-        describeStockRefusal(pe, nameOfProduct) ??
-          (pe.code === 'invalid' && /price_mismatch|total_mismatch/.test(pe.detail)
+        pe.code === 'invalid' && /price_mismatch|total_mismatch/.test(pe.detail)
           ? 'تغيّر سعر أحد المنتجات أثناء التحرير. أعد تحميل الصفحة لرؤية الأسعار الحالية ثم أعد المحاولة — لم يُحفظ الطلب.'
           : pe.code === 'invalid' && /unknown (product|variant)/.test(pe.detail)
             ? 'أحد المنتجات أو التنويعات في الطلب غير موجود في كتالوج قاعدة البيانات (ربما حُذف، أو لم يُرحَّل الكتالوج بعد). أعد تحميل الصفحة واختر منتجات محفوظة — لم يُحفظ الطلب.'
-            : describePersistenceError(pe)),
+            : describePersistenceError(pe),
       );
       setSubmitting(false);
       inFlight.current = false;
@@ -433,24 +408,6 @@ export function InStoreOrderPage() {
           </button>
         </div>
       </form>
-
-      {override && (
-        <StockOverrideDialog
-          title="المخزون غير كافٍ لهذا البيع"
-          intro="لن يُسجَّل البيع إلا بتجاوز صريح وموثَّق. سيُسجَّل الطلب ويُخصم المطلوب كاملًا فينزل رصيد المنتجات التالية تحت الصفر."
-          shortfalls={override}
-          nameOf={nameOfProduct}
-          confirmLabel="تسجيل البيع رغم النقص"
-          onClose={() => setOverride(null)}
-          onConfirm={async (reason, key, confirmed) => {
-            const input = pending.current;
-            if (!input) throw new Error('no pending sale');
-            const saved = await createInStoreOrderWithOverride(input, key, confirmed, reason);
-            // Only after the database returned the stored order do we leave the form.
-            navigate(`/admin/orders/${saved.id}`);
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -13,9 +13,7 @@ import {
 } from '../../storefront/checkout/orderStore';
 import { checkoutCountries, deliveryMethods, egyptGovernorates } from '../../storefront/checkout/checkoutData';
 import { attributeValueLabel } from '../../storefront/catalog/attributeStore';
-import { classifyError, describePersistenceError } from '../../../lib/persistence/errors';
-import { StockOverrideDialog } from '../inventory/StockOverrideDialog';
-import { deliverOrderWithOverride, describeStockRefusal, parseShortfalls, type Shortfall } from '../inventory/inventoryOverrides';
+import { describePersistenceError } from '../../../lib/persistence/errors';
 import { LoadingState } from '../../shared/components/LoadingState';
 import { AdminPageHeader } from '../components/AdminPageHeader';
 import { OrderStatusBadge } from '../components/OrderStatusBadge';
@@ -42,11 +40,6 @@ export function OrderDetailsPage() {
   const loadState = useOrdersLoadState();
   const [statusError, setStatusError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
-  // Set when the database refused a delivery because stock is short: the admin may
-  // proceed ONLY through the explicit, audited shortage override.
-  const [override, setOverride] = useState<{ shortfalls: Shortfall[]; expectedStatus: OrderStatus } | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const nameOfProduct = (id: string) => order?.lines.find((l) => l.productId === id)?.name.ar ?? id;
 
   // Resolves only when the database confirmed the change (a zero-row update
   // is an error, not a success). Passing the status this screen is showing
@@ -55,21 +48,12 @@ export function OrderDetailsPage() {
   const applyStatus = (status: OrderStatus) => {
     if (applying || !order) return;
     setStatusError(null);
-    setNotice(null);
     setApplying(true);
     updateOrderStatus(order.id, status, order.status)
       .then(() => setPendingStatus(null))
       .catch((e: unknown) => {
-        const pe = classifyError(e);
-        console.error('Order status update failed:', pe.code);
-        if (status === 'delivered' && pe.code === 'insufficient_stock') {
-          const list = parseShortfalls(pe.detail);
-          if (list.length > 0) {
-            setOverride({ shortfalls: list, expectedStatus: order.status });
-            return;
-          }
-        }
-        setStatusError(describeStockRefusal(pe, nameOfProduct) ?? describePersistenceError(e));
+        console.error('Order status update failed:', e instanceof Error ? e.message : e);
+        setStatusError(describePersistenceError(e));
         void reloadOrders();
       })
       .finally(() => setApplying(false));
@@ -195,11 +179,6 @@ export function OrderDetailsPage() {
             {statusError}
           </p>
         )}
-        {notice && (
-          <p role="status" className="mt-3 text-xs font-medium text-espresso">
-            {notice}
-          </p>
-        )}
         {confirmCancel && (
           <div className="mt-4 flex flex-wrap items-center gap-3 rounded border border-burgundy/30 bg-burgundy/5 px-4 py-3">
             <TriangleAlert className="size-4 shrink-0 text-burgundy" aria-hidden />
@@ -270,29 +249,6 @@ export function OrderDetailsPage() {
         </section>
         )}
       </div>
-
-      {override && (
-        <StockOverrideDialog
-          title="المخزون غير كافٍ لتسليم هذا الطلب"
-          intro="لن يُسلَّم الطلب إلا بتجاوز صريح وموثَّق. سيُخصم المطلوب كاملًا وينزل رصيد المنتجات التالية تحت الصفر."
-          shortfalls={override.shortfalls}
-          nameOf={nameOfProduct}
-          confirmLabel="تسليم الطلب رغم النقص"
-          onClose={() => setOverride(null)}
-          onConfirm={async (reason, key, confirmed) => {
-            await deliverOrderWithOverride({
-              orderId: order.id,
-              expectedStatus: override.expectedStatus,
-              attemptKey: key,
-              shortfalls: confirmed,
-              reason,
-            });
-            await reloadOrders();
-            setPendingStatus(null);
-            setNotice('تم تسليم الطلب مع تجاوز موثَّق لنقص المخزون — سُجِّل في سجل حركات المخزون.');
-          }}
-        />
-      )}
 
       <section aria-labelledby="od-items" className="mt-6 rounded border border-taupe/70 bg-white p-5">
         <h3 id="od-items" className="font-display text-lg text-espresso">المنتجات</h3>

@@ -8,6 +8,7 @@ import { useStorefrontLocale } from '../../shared/hooks/useStorefrontLocale';
 import { useCart } from '../cart/useCart';
 import { attributeValueLabel } from '../catalog/attributeStore';
 import { resolveCartLines, useCatalog } from '../catalog/catalogStore';
+import { reloadStock } from '../catalog/stockStore';
 import { formatPrice } from '../../shared/utils/format';
 import { generateId } from '../../shared/utils/id';
 import { navHref } from '../layout/navData';
@@ -46,6 +47,7 @@ const copy = {
     placingOrder: 'جارٍ إرسال الطلب…',
     reviewNote: 'راجع بياناتك قبل التأكيد — الدفع عند الاستلام.',
     submitError: 'تعذّر إرسال الطلب — تحقق من الاتصال بالإنترنت وحاول مرة أخرى.',
+    stockError: 'عذرًا، الكمية المطلوبة من أحد المنتجات لم تعد متاحة. راجع السلة وقلّل الكمية أو احذف المنتج ثم أعد المحاولة — لم يُسجَّل الطلب.',
     errName: 'اكتب الاسم الكامل (حرفان على الأقل)',
     errPhone: 'اكتب رقم هاتف صحيحًا (9–15 رقمًا)',
     errEmail: 'اكتب بريدًا إلكترونيًا صحيحًا',
@@ -88,6 +90,7 @@ const copy = {
     placingOrder: 'Placing order…',
     reviewNote: 'Review your details before confirming — cash on delivery.',
     submitError: 'Could not place the order — check your connection and try again.',
+    stockError: 'Sorry, the requested quantity of one item is no longer available. Review your cart, lower the quantity or remove it, then try again — your order was not placed.',
     errName: 'Enter your full name (2+ characters)',
     errPhone: 'Enter a valid phone number (9–15 digits)',
     errEmail: 'Enter a valid email address',
@@ -154,7 +157,7 @@ export function CheckoutPage() {
   // second order and a second confirmation email. Replaced when the order's
   // content changes.
   const identity = useRef<{ fingerprint: string; id: string; ref: string } | null>(null);
-  const [submitError, setSubmitError] = useState(false);
+  const [submitError, setSubmitError] = useState<false | 'generic' | 'stock'>(false);
 
 
   const catalog = useCatalog();
@@ -224,10 +227,13 @@ export function CheckoutPage() {
         total: subtotal,
       };
       await saveOrder(order);
+      void reloadStock();
       cart.clear();
       navigate(navHref(locale, `/order-confirmation/${order.id}`));
-    } catch {
-      setSubmitError(true);
+    } catch (err) {
+      const outOfStock = (err as { code?: string } | null)?.code === 'IS002';
+      if (outOfStock) void reloadStock();
+      setSubmitError(outOfStock ? 'stock' : 'generic');
       setSubmitting(false);
       inFlight.current = false;
     }
@@ -473,7 +479,7 @@ export function CheckoutPage() {
             )}
             {submitError && (
               <p role="alert" className="mt-3 text-xs font-medium text-burgundy">
-                {t.submitError}
+                {submitError === 'stock' ? t.stockError : t.submitError}
               </p>
             )}
             <button

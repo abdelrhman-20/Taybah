@@ -14,13 +14,7 @@ export type PersistenceErrorCode =
   | 'invalid' // server rejected the payload
   | 'schema_missing' // migration not applied
   | 'verify_failed' // write reported success but read-back disagrees
-  | 'stock_not_initialized' // inventory: the product has no opening balance (IS001)
-  | 'idempotency_key_reuse' // inventory: a key was reused for a different request (IS005)
-  | 'insufficient_stock' // inventory: stock is short; `detail` is the JSON shortfall list (IS002)
-  | 'legacy_order_decision_required' // inventory: an old order needs an explicit decision first (IS003)
-  | 'order_lines_locked' // inventory: the order's lines can no longer change (IS004)
-  | 'order_lines_invalid' // inventory: the order lines cannot be read as product/quantity lines (IS006)
-  | 'shortfall_changed' // inventory: the stock moved since the admin looked; `detail` is the fresh list (IS007)
+  | 'insufficient_stock' // stock: a tracked product has fewer pieces available than ordered (IS002)
   | 'network'
   | 'unknown';
 
@@ -56,14 +50,7 @@ export function classifyError(error: PostgrestLike | unknown): PersistenceError 
   if (code === 'CF003') return new PersistenceError('exists', e.details ?? '');
   if (code === 'CF004') return new PersistenceError('duplicate_slug', e.details ?? '');
   if (code === 'CF005') return new PersistenceError('duplicate_sku', e.details ?? '');
-  if (code === 'IS001') return new PersistenceError('stock_not_initialized', e.details ?? '');
-  if (code === 'IS005') return new PersistenceError('idempotency_key_reuse', e.details ?? '');
-  // the shortfall lists are JSON the UI parses: kept whole, never truncated
   if (code === 'IS002') return new PersistenceError('insufficient_stock', e.details ?? '');
-  if (code === 'IS003') return new PersistenceError('legacy_order_decision_required', e.details ?? '');
-  if (code === 'IS004') return new PersistenceError('order_lines_locked', e.details ?? '');
-  if (code === 'IS006') return new PersistenceError('order_lines_invalid', e.details ?? '');
-  if (code === 'IS007') return new PersistenceError('shortfall_changed', e.details ?? '');
   if (code === '22023') return new PersistenceError('invalid', e.details ?? message);
   if (code === '42501' || /permission denied|forbidden|row-level security/i.test(message)) {
     return new PersistenceError('unauthorized', detail);
@@ -104,20 +91,8 @@ export function describePersistenceError(e: unknown): string {
       return 'رفض الخادم البيانات المُرسلة. تحقق من الحقول ثم أعد المحاولة.';
     case 'schema_missing':
       return 'جداول قاعدة البيانات غير مكتملة (ترحيل ناقص) — تواصل مع مسؤول النظام. لم يُحفظ شيء.';
-    case 'stock_not_initialized':
-      return 'هذا المنتج بلا رصيد افتتاحي — هيّئ الرصيد أولًا. لم يُحفظ شيء.';
-    case 'idempotency_key_reuse':
-      return 'استُخدم مفتاح هذه العملية لطلب مختلف. أغلق النافذة وافتحها من جديد ثم أعد المحاولة — لم يُسجَّل شيء.';
     case 'insufficient_stock':
-      return 'المخزون غير كافٍ لهذه العملية — لم يتغيّر شيء.';
-    case 'legacy_order_decision_required':
-      return 'هذا الطلب سابق لتفعيل المخزون ويحتاج قرار تسوية صريحًا قبل تسليمه. لم يتغيّر شيء.';
-    case 'order_lines_locked':
-      return 'لا يمكن تعديل أسطر هذا الطلب بعد تحريك المخزون له (خصم أو مرتجع). لم يتغيّر شيء.';
-    case 'order_lines_invalid':
-      return 'أسطر هذا الطلب غير صالحة كأسطر منتج وكمية، فلا يمكن خصمها من المخزون. لم يتغيّر شيء.';
-    case 'shortfall_changed':
-      return 'تغيّر المخزون منذ آخر عرض — راجع الأرقام المحدَّثة وأكّد من جديد. لم يتغيّر شيء.';
+      return 'الكمية المطلوبة من أحد المنتجات لم تعد متاحة. راجع السلة وقلّل الكمية أو احذف المنتج ثم أعد المحاولة — لم يُسجَّل الطلب.';
     case 'verify_failed':
       return 'تعذّر التحقق من الحفظ على الخادم. أعد تحميل الصفحة للتأكد من آخر نسخة محفوظة.';
     case 'network':

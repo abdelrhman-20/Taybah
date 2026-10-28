@@ -21,8 +21,7 @@ export default defineConfig({
     ],
     setupFiles: ['./vitest.setup.ts'],
     // Many files boot an in-process Postgres (PGlite, WASM) or render whole admin pages in
-    // jsdom; with ~66 files running in parallel the 5 s default timed out under load (CI
-    // runs `npm test` before every deploy). A timeout, not an assertion: nothing is weakened.
+    // jsdom; with ~60 files running in parallel the 5 s default times out under load.
     testTimeout: 30_000,
     hookTimeout: 120_000,
   },

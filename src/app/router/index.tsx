@@ -24,9 +24,7 @@ import { AdminDashboardPage } from '../../features/admin/dashboard/AdminDashboar
 import { OrdersPage } from '../../features/admin/orders/OrdersPage';
 import { OrderDetailsPage } from '../../features/admin/orders/OrderDetailsPage';
 import { InStoreOrderPage } from '../../features/admin/orders/InStoreOrderPage';
-import { AdminInventoryPage } from '../../features/admin/inventory/AdminInventoryPage';
-import { InventoryMovementsPage } from '../../features/admin/inventory/InventoryMovementsPage';
-import { InventoryReconciliationPage } from '../../features/admin/inventory/InventoryReconciliationPage';
+import { AdminStockPage } from '../../features/admin/inventory/AdminStockPage';
 import { AdminPlaceholderPage } from '../../features/admin/components/AdminPlaceholderPage';
 import { AdminProductsPage } from '../../features/admin/catalog/AdminProductsPage';
 import { ProductFormPage } from '../../features/admin/catalog/ProductFormPage';
@@ -88,9 +86,7 @@ export const router = createBrowserRouter(
       { path: 'products/new', element: <ProductFormPage /> },
       { path: 'products/:productId', element: <AdminProductDetailsPage /> },
       { path: 'products/:productId/edit', element: <ProductFormPage /> },
-      { path: 'inventory', element: <AdminInventoryPage /> },
-      { path: 'inventory/movements', element: <InventoryMovementsPage /> },
-      { path: 'inventory/reconciliation', element: <InventoryReconciliationPage /> },
+      { path: 'inventory', element: <AdminStockPage /> },
       { path: 'categories', element: <AdminCategoriesPage /> },
       { path: 'categories/new', element: <TaxonomyFormPage kind="category" /> },
       { path: 'categories/:categoryId/edit', element: <TaxonomyFormPage kind="category" /> },
